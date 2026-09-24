@@ -682,13 +682,13 @@ export const AuthModal: React.FC = () => {
                   )}
                 </div>
 
-                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-[11px] text-gray-600 leading-relaxed text-center">
-                  <div className="flex items-center justify-center gap-1.5 font-semibold text-gray-700">
+                <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed text-center">
+                  <div className="flex items-center justify-center gap-1.5 font-semibold text-emerald-900">
                     <Lock className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Real-Time Email Verification</span>
+                    <span>Twilio Email Verification Active</span>
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-1">
-                    An automated verification code has been dispatched via Twilio to your email inbox. Please check your inbox and spam folder.
+                  <p className="text-[10px] text-emerald-700 mt-1">
+                    Check your inbox and <strong>Spam / Junk</strong> folder for the email from <strong>Trial with Twilio</strong> (Subject: <em>Your Order Has Been Confirmed!</em>, Order / OTP Code: <strong>#12345</strong>).
                   </p>
                 </div>
               </form>
