@@ -171,23 +171,41 @@ export const Navbar: React.FC<NavbarProps> = ({
                   className="flex items-center gap-2 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-xl transition-colors border border-emerald-200"
                 >
                   <div className="w-7 h-7 rounded-full bg-emerald-600 text-white font-black text-xs flex items-center justify-center">
-                    {(user.email?.[0] || user.phone?.[3] || 'V').toUpperCase()}
+                    {(user.name?.[0] || user.email?.[0] || 'V').toUpperCase()}
                   </div>
-                  <span className="text-xs font-bold max-w-[100px] truncate hidden md:block">
-                    {user.email ? user.email.split('@')[0] : user.phone || 'My Account'}
+                  <span className="text-xs font-bold max-w-[120px] truncate hidden md:block">
+                    Hi, {user.name || user.email.split('@')[0]}
                   </span>
                   <ChevronDown className="w-3.5 h-3.5 text-emerald-700" />
                 </button>
 
                 {isUserDropdownOpen && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in zoom-in-95">
-                    <div className="px-3 py-2 border-b border-gray-100">
+                  <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in zoom-in-95">
+                    <div className="px-3 py-2.5 border-b border-gray-100">
                       <div className="text-xs font-bold text-gray-900 truncate">
-                        {user.email || user.phone}
+                        {user.name || 'Valued Customer'}
                       </div>
-                      <div className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 mt-0.5">
+                      <div className="text-[11px] text-gray-500 truncate mt-0.5">
+                        {user.email}
+                      </div>
+                      {user.phone && (
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          📱 {user.phone}
+                        </div>
+                      )}
+                      {user.place && (
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          📍 {user.place} {user.pincode ? `(${user.pincode})` : ''}
+                        </div>
+                      )}
+                      {user.dob && (
+                        <div className="text-[10px] text-gray-400 mt-0.5">
+                          🎂 DOB: {user.dob}
+                        </div>
+                      )}
+                      <div className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 mt-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                        Verified Session Active
+                        Verified Customer
                       </div>
                     </div>
 

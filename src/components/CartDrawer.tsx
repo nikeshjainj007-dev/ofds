@@ -86,7 +86,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
     try {
       await initiateRazorpayPayment({
         amountInRupees: grandTotal,
-        userName: user.user_metadata?.name || 'Satvik Customer',
+        userName: user.name || 'Satvik Customer',
         userEmail: user.email || 'customer@satvikbite.com',
         userPhone: user.phone || '9876543210',
         description: `SatvikBite Pure Veg Order (${items.length} items)`,

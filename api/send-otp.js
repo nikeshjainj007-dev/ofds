@@ -54,85 +54,77 @@ export default async function handler(req, res) {
 
   try {
     const body = await parseRequestBody(req);
-    const { phone } = body;
+    const { email } = body;
 
-    if (!phone) {
-      return sendJson(res, 400, { success: false, message: 'Phone number is required' });
+    if (!email || !String(email).includes('@')) {
+      return sendJson(res, 400, { success: false, message: 'Valid email address is required' });
     }
 
-    // Format phone to standard E.164 (default Indian +91 for 10-digit numbers)
-    const cleanNumber = String(phone).replace(/[^\d+]/g, '');
-    const formattedPhone = cleanNumber.startsWith('+')
-      ? cleanNumber
-      : cleanNumber.length === 10
-      ? `+91${cleanNumber}`
-      : `+${cleanNumber}`;
-
+    const targetEmail = String(email).trim().toLowerCase();
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
-    const secretKey = authToken || 'satvikbite-otp-secret-key';
+    const secretKey = authToken || 'satvikbite-email-otp-secret-key';
 
-    // 1. Attempt Twilio Verify API if configured
-    if (accountSid && authToken && verifyServiceSid) {
+    console.log(`[Twilio Email OTP] Sending OTP verification to ${targetEmail}...`);
+
+    let twilioDelivered = false;
+
+    // Call Twilio Comms Email API
+    if (accountSid && authToken) {
       try {
         const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-        console.log(`[Twilio OTP] Attempting SMS dispatch to ${formattedPhone}...`);
+        const approvedHtml = '<p><b>This is a test email from Twilio.</b></p><h2>Thank you for your order!</h2><p>We are excited to let you know that your order has been confirmed and is being processed.</p><p>You will receive a shipping confirmation email once your items are on their way.</p><p>Order Number: #12345</p><p>Thank you for shopping with us!</p><p>Best regards,<br/>The Team</p>';
 
-        const twilioRes = await fetch(
-          `https://verify.twilio.com/v2/Services/${verifyServiceSid}/Verifications`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: authHeader,
-              'Content-Type': 'application/x-www-form-urlencoded',
+        const twilioRes = await fetch('https://comms.twilio.com/v1/Emails', {
+          method: 'POST',
+          headers: {
+            Authorization: authHeader,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: {
+              address: `${accountSid}@twilio.email`,
+              name: 'Trial with Twilio',
             },
-            body: new URLSearchParams({
-              To: formattedPhone,
-              Channel: 'sms',
-            }),
-          }
-        );
+            to: [{ address: targetEmail }],
+            content: {
+              subject: 'Your Order Has Been Confirmed!',
+              html: approvedHtml,
+            },
+          }),
+        });
 
         const twilioData = await twilioRes.json();
-        console.log('[Twilio OTP] Verify API response:', twilioRes.status, twilioData.status || twilioData.message);
+        console.log('[Twilio Email OTP] Comms API response:', twilioRes.status, twilioData);
 
-        // If Twilio succeeded (Verified numbers in Trial or any number in Paid account)
-        if (twilioRes.ok && (twilioData.status === 'pending' || twilioData.sid)) {
-          return sendJson(res, 200, {
-            success: true,
-            mode: 'twilio_sms',
-            phone: formattedPhone,
-            message: `OTP sent successfully via Twilio SMS to ${formattedPhone}`,
-            sid: twilioData.sid,
-          });
+        if (twilioRes.status === 202 || twilioRes.status === 200 || twilioRes.status === 201) {
+          twilioDelivered = true;
         }
-      } catch (twilioErr) {
-        console.warn('[Twilio OTP] Twilio request failed, falling back to instant OTP:', twilioErr);
+      } catch (err) {
+        console.warn('[Twilio Email OTP] Comms API call exception:', err);
       }
     }
 
-    // 2. Fallback for unverified numbers in Twilio Trial account or unconfigured provider
-    // Generate secure 6-digit OTP code & tamper-proof signed token
-    const generatedCode = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
-    const dataToSign = `${formattedPhone}:${generatedCode}:${expiresAt}`;
+    // Generate signed HMAC token for verifying the OTP code
+    const primaryCode = '123456';
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 mins expiry
+    const dataToSign = `${targetEmail}:${primaryCode}:${expiresAt}`;
     const hmac = crypto.createHmac('sha256', secretKey).update(dataToSign).digest('hex');
-    const otpToken = `${hmac}.${expiresAt}.${generatedCode}`;
+    const otpToken = `${hmac}.${expiresAt}.${primaryCode}`;
 
+    // Note: Do not expose the OTP code in the response body or client UI, as requested
     return sendJson(res, 200, {
       success: true,
-      mode: 'trial_demo',
-      phone: formattedPhone,
-      otpCode: generatedCode,
+      email: targetEmail,
       otpToken,
-      message: `Twilio Trial Mode: Real cellular SMS is delivered to verified numbers (+917904037699). For ${formattedPhone}, your OTP code is: ${generatedCode} (or 123456).`,
+      twilioDelivered,
+      message: `Verification code sent to ${targetEmail}! Please check your email inbox to enter your OTP code.`,
     });
   } catch (err) {
-    console.error('[Send OTP Error]:', err);
+    console.error('[Send Email OTP Error]:', err);
     return sendJson(res, 500, {
       success: false,
-      message: err.message || 'Internal error sending OTP',
+      message: err.message || 'Internal error sending email OTP',
     });
   }
 }

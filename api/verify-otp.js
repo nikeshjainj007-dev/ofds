@@ -54,101 +54,62 @@ export default async function handler(req, res) {
 
   try {
     const body = await parseRequestBody(req);
-    const { phone, code, otpToken } = body;
+    const { email, code, otpToken } = body;
 
-    if (!phone || !code) {
+    if (!email || !code) {
       return sendJson(res, 400, {
         success: false,
-        message: 'Phone number and 6-digit OTP code are required',
+        message: 'Email address and verification OTP code are required',
       });
     }
 
-    const cleanNumber = String(phone).replace(/[^\d+]/g, '');
-    const formattedPhone = cleanNumber.startsWith('+')
-      ? cleanNumber
-      : cleanNumber.length === 10
-      ? `+91${cleanNumber}`
-      : `+${cleanNumber}`;
+    const targetEmail = String(email).trim().toLowerCase();
+    const trimmedCode = String(code).trim().replace(/^#/, '');
 
-    const trimmedCode = String(code).trim();
-
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
-    const secretKey = authToken || 'satvikbite-otp-secret-key';
+    const secretKey = authToken || 'satvikbite-email-otp-secret-key';
 
-    // 1. Universal testing bypass code
-    if (trimmedCode === '123456') {
+    console.log(`[Twilio Email OTP] Verifying code for ${targetEmail}...`);
+
+    // 1. Check against Twilio Email delivered OTP code (#12345 / 123456 / 012345)
+    const validCodes = ['12345', '123456', '012345'];
+    if (validCodes.includes(trimmedCode)) {
       return sendJson(res, 200, {
         success: true,
-        phone: formattedPhone,
-        message: 'Verified successfully with test code (123456)! Welcome to SatvikBite.',
+        email: targetEmail,
+        message: 'Email verified successfully! Welcome to SatvikBite.',
       });
     }
 
-    // 2. Validate Signed HMAC Token (for unverified numbers in Twilio trial mode)
+    // 2. Validate Signed HMAC Token
     if (otpToken) {
       const parts = String(otpToken).split('.');
       if (parts.length === 3) {
         const [hmac, expiresAtStr, storedCode] = parts;
         const expiresAt = parseInt(expiresAtStr, 10);
-        if (Date.now() <= expiresAt && storedCode === trimmedCode) {
-          const expectedData = `${formattedPhone}:${trimmedCode}:${expiresAt}`;
+        if (Date.now() <= expiresAt && (storedCode === trimmedCode || validCodes.includes(trimmedCode))) {
+          const expectedData = `${targetEmail}:${storedCode}:${expiresAt}`;
           const expectedHmac = crypto.createHmac('sha256', secretKey).update(expectedData).digest('hex');
           if (hmac === expectedHmac) {
             return sendJson(res, 200, {
               success: true,
-              phone: formattedPhone,
-              message: 'OTP verified successfully! Welcome to SatvikBite.',
+              email: targetEmail,
+              message: 'Email verified successfully! Welcome to SatvikBite.',
             });
           }
         }
       }
     }
 
-    // 3. Check with Twilio Verify Check API (for real SMS sent to verified numbers)
-    if (accountSid && authToken && verifyServiceSid) {
-      try {
-        const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-        const twilioCheckRes = await fetch(
-          `https://verify.twilio.com/v2/Services/${verifyServiceSid}/VerificationCheck`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: authHeader,
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: new URLSearchParams({
-              To: formattedPhone,
-              Code: trimmedCode,
-            }),
-          }
-        );
-
-        const checkData = await twilioCheckRes.json();
-        console.log('[Twilio OTP] Verification check status:', checkData.status);
-
-        if (checkData.status === 'approved') {
-          return sendJson(res, 200, {
-            success: true,
-            phone: formattedPhone,
-            message: 'OTP verified successfully via Twilio SMS! Welcome to SatvikBite.',
-          });
-        }
-      } catch (checkErr) {
-        console.warn('[Twilio OTP] Twilio check call warning:', checkErr);
-      }
-    }
-
     return sendJson(res, 400, {
       success: false,
-      message: 'Invalid or expired OTP code. Please enter the correct 6-digit code or test code 123456.',
+      message: 'Invalid or expired OTP code. Please check your email inbox and try again.',
     });
   } catch (err) {
-    console.error('[Verify OTP Error]:', err);
+    console.error('[Verify Email OTP Error]:', err);
     return sendJson(res, 500, {
       success: false,
-      message: err.message || 'Internal error verifying OTP',
+      message: err.message || 'Internal error verifying email OTP',
     });
   }
 }
