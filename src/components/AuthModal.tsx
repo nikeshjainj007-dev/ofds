@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
 export const AuthModal: React.FC = () => {
-  const { isAuthModalOpen, closeAuthModal, sendOtp, verifyOtp } = useAuth();
+  const { isAuthModalOpen, closeAuthModal, sendOtp, verifyOtp, lastGeneratedOtp } = useAuth();
   const { showToast } = useToast();
 
   const [authMethod, setAuthMethod] = useState<'email' | 'phone'>('email');
@@ -108,6 +108,14 @@ export const AuthModal: React.FC = () => {
       setOtpDigits(digits);
       otpInputsRef.current[5]?.focus();
     }
+  };
+
+  const fillOtpCode = (code: string) => {
+    const digits = code.slice(0, 6).split('');
+    setOtpDigits(digits);
+    setTimeout(() => {
+      otpInputsRef.current[5]?.focus();
+    }, 50);
   };
 
   // Handle Verify OTP
@@ -277,11 +285,11 @@ export const AuthModal: React.FC = () => {
               <div className="mt-6 pt-5 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500">
                 <div className="flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Secure Supabase Auth</span>
+                  <span>Twilio SMS & Supabase Auth</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-amber-500" />
-                  <span>No Password Required</span>
+                  <span>Instant SMS Verification</span>
                 </div>
               </div>
             </div>
@@ -358,8 +366,30 @@ export const AuthModal: React.FC = () => {
                 </div>
 
                 {/* Developer / Testing Note */}
-                <div className="bg-emerald-50 border border-emerald-200/70 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
-                  <span className="font-semibold">💡 Testing Note:</span> Check your actual inbox/SMS for the Supabase OTP. You can also use code <code className="bg-white px-1.5 py-0.5 rounded font-mono font-bold text-emerald-900 border border-emerald-300">123456</code> as a quick test bypass code during local development!
+                <div className="bg-emerald-50 border border-emerald-200/70 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed space-y-1.5">
+                  {authMethod === 'phone' && lastGeneratedOtp ? (
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-emerald-900">
+                          🔔 Verification Code: <code className="bg-white px-2 py-0.5 rounded font-mono font-bold text-emerald-950 border border-emerald-300 text-xs">{lastGeneratedOtp}</code>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => fillOtpCode(lastGeneratedOtp)}
+                          className="text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-2.5 py-1 rounded-lg transition-colors shadow-sm"
+                        >
+                          Auto-fill
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-emerald-700 mt-1">
+                        Twilio Trial restricts real SMS to verified numbers (+917904037699). For any other number, use the code above or <code className="font-mono font-bold text-emerald-900">123456</code>.
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="font-semibold">📱 Twilio SMS:</span> Check your phone's SMS inbox for the 6-digit OTP code sent via Twilio! You can also use code <code className="bg-white px-1.5 py-0.5 rounded font-mono font-bold text-emerald-900 border border-emerald-300">123456</code> for testing.
+                    </div>
+                  )}
                 </div>
               </form>
             </div>
