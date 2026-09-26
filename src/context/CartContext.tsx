@@ -84,6 +84,29 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('satvik_past_orders', JSON.stringify(pastOrders));
   }, [pastOrders]);
 
+  // Synchronize orders when changed by Dashboard
+  useEffect(() => {
+    const handleOrdersUpdated = () => {
+      try {
+        const saved = localStorage.getItem('satvik_past_orders');
+        if (saved) {
+          const parsed: Order[] = JSON.parse(saved);
+          setPastOrders(parsed);
+          setActiveOrder((prev) => {
+            if (!prev) return parsed[0] || null;
+            const found = parsed.find((o) => o.id === prev.id);
+            return found || prev;
+          });
+        }
+      } catch (e) {
+        console.error('Failed to sync past orders', e);
+      }
+    };
+
+    window.addEventListener('satvik_orders_updated', handleOrdersUpdated);
+    return () => window.removeEventListener('satvik_orders_updated', handleOrdersUpdated);
+  }, []);
+
   const addItem = (dish: Dish, options?: { isJain?: boolean; spiceLevel?: 'Mild' | 'Medium' | 'Spicy'; specialNote?: string }) => {
     setItems((prev) => {
       const existingIndex = prev.findIndex((i) => i.dish.id === dish.id);
@@ -196,8 +219,17 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setActiveOrder(newOrder);
     setPastOrders((prev) => [newOrder, ...prev]);
     clearCart();
+
+    // Broadcast new order to Dashboard
+    try {
+      window.dispatchEvent(new CustomEvent('satvik_new_order_placed', { detail: newOrder }));
+    } catch (e) {
+      console.error(e);
+    }
+
     return newOrder;
   };
+
 
   return (
     <CartContext.Provider

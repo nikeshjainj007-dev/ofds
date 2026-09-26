@@ -9,11 +9,14 @@ import {
   Sparkles, 
   ChevronDown, 
   Menu,
-  X
+  X,
+  LayoutDashboard
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../context/ToastContext';
+import { useDashboard } from '../context/DashboardContext';
+
 
 interface NavbarProps {
   searchQuery: string;
@@ -33,8 +36,14 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { user, openAuthModal, logout } = useAuth();
   const { totalCount, grandTotal, setIsCartOpen, selectedAddress, setSelectedAddress, addresses } = useCart();
   const { showToast } = useToast();
+  const { setIsDashboardOpen, orders } = useDashboard();
+
+  const activeOrdersCount = orders.filter(
+    (o) => o.status !== 'DELIVERED' && o.status !== 'CANCELLED'
+  ).length;
 
   const [isAddressDropdownOpen, setIsAddressDropdownOpen] = useState(false);
+
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -162,6 +171,21 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>Jain Friendly</span>
             </button>
 
+            {/* Manager / Admin Dashboard Trigger Button */}
+            <button
+              onClick={() => setIsDashboardOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-emerald-800 to-green-800 hover:from-emerald-900 hover:to-green-900 text-white rounded-xl text-xs font-black shadow-md shadow-emerald-900/10 transition-all hover:scale-[1.02]"
+              title="Canteen Operations Dashboard (Orders, Payments, Tracking, Fleet, Staff)"
+            >
+              <LayoutDashboard className="w-3.5 h-3.5 text-emerald-300" />
+              <span className="hidden sm:inline">Dashboard</span>
+              {activeOrdersCount > 0 && (
+                <span className="bg-amber-400 text-gray-950 text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                  {activeOrdersCount}
+                </span>
+              )}
+            </button>
+
             {/* Auth / User Section */}
             {user ? (
               <div className="relative">
@@ -212,6 +236,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <button
                       onClick={() => {
                         setIsUserDropdownOpen(false);
+                        setIsDashboardOpen(true);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-50 rounded-lg flex items-center gap-2 mt-1 transition-colors"
+                    >
+                      <LayoutDashboard className="w-4 h-4 text-emerald-700" />
+                      Operations Dashboard
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsUserDropdownOpen(false);
                         onOpenOrderHistory();
                       }}
                       className="w-full text-left px-3 py-2 text-xs font-medium text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 rounded-lg flex items-center gap-2 mt-1 transition-colors"
@@ -219,6 +254,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <Clock className="w-4 h-4 text-emerald-600" />
                       Past Orders & Tracking
                     </button>
+
 
                     <button
                       onClick={handleLogout}
@@ -277,10 +313,23 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className="w-full pl-10 pr-4 py-2.5 bg-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
-            <div className="flex items-center justify-between">
+
+            <div className="flex flex-col gap-2">
+
+              <button
+                onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  setIsDashboardOpen(true);
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-800 to-green-800 text-white rounded-xl text-xs font-bold shadow"
+              >
+                <LayoutDashboard className="w-4 h-4 text-emerald-300" />
+                <span>Canteen Operations Dashboard {activeOrdersCount > 0 ? `(${activeOrdersCount} Active)` : ''}</span>
+              </button>
+
               <button
                 onClick={() => setIsJainOnly(!isJainOnly)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold border ${
+                className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold border ${
                   isJainOnly
                     ? 'bg-amber-500 text-white border-amber-600'
                     : 'bg-white text-gray-700 border-gray-200'
@@ -292,6 +341,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
         )}
+
       </div>
     </header>
   );

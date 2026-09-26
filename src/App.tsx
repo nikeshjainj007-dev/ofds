@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { ToastProvider } from './context/ToastContext';
+import { DashboardProvider } from './context/DashboardContext';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { CategoryFilter } from './components/CategoryFilter';
@@ -11,7 +12,9 @@ import { CartDrawer } from './components/CartDrawer';
 import { AuthModal } from './components/AuthModal';
 import { OrderTrackingModal } from './components/OrderTrackingModal';
 import { OrderHistoryModal } from './components/OrderHistoryModal';
+import { DashboardModal } from './components/dashboard/DashboardModal';
 import { RESTAURANTS, DISHES } from './data/mockData';
+
 import type { Order } from './types';
 import { 
   Sparkles, 
@@ -284,6 +287,7 @@ const MainApp: React.FC = () => {
       {/* Modals & Overlays */}
       <CartDrawer onOrderSuccess={handleOrderSuccess} />
       <AuthModal />
+      <DashboardModal />
       <OrderTrackingModal
         isOpen={isTrackingModalOpen}
         onClose={() => setIsTrackingModalOpen(false)}
@@ -305,10 +309,13 @@ export default function App() {
   return (
     <ToastProvider>
       <AuthProvider>
-        <CartProvider>
-          <MainApp />
-        </CartProvider>
+        <DashboardProvider>
+          <CartProvider>
+            <MainApp />
+          </CartProvider>
+        </DashboardProvider>
       </AuthProvider>
     </ToastProvider>
   );
 }
+
