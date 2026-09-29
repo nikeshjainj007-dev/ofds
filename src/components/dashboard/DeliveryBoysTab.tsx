@@ -59,7 +59,7 @@ export const DeliveryBoysTab: React.FC = () => {
         const matchesName = r.name.toLowerCase().includes(q);
         const matchesPhone = r.phone.includes(q);
         const matchesVeh = r.vehicleNumber.toLowerCase().includes(q);
-        const matchesZone = r.currentZone.toLowerCase().includes(q);
+        const matchesZone = (r.currentZone || r.assignedFloors || '').toLowerCase().includes(q);
         if (!matchesName && !matchesPhone && !matchesVeh && !matchesZone) return false;
       }
       return true;
@@ -86,7 +86,7 @@ export const DeliveryBoysTab: React.FC = () => {
     setEmail(r.email || '');
     setVehicleType(r.vehicleType);
     setVehicleNumber(r.vehicleNumber);
-    setCurrentZone(r.currentZone);
+    setCurrentZone(r.currentZone || r.assignedFloors || 'Wing A (Ground to 9th Floor)');
     setAvatar(r.avatar);
     setEmergencyContact(r.emergencyContact);
     setIsAddModalOpen(true);
@@ -102,6 +102,7 @@ export const DeliveryBoysTab: React.FC = () => {
         vehicleType,
         vehicleNumber,
         currentZone,
+        assignedFloors: currentZone,
         avatar: avatar || editingRider.avatar,
         emergencyContact
       });
@@ -113,6 +114,7 @@ export const DeliveryBoysTab: React.FC = () => {
         vehicleType,
         vehicleNumber,
         currentZone,
+        assignedFloors: currentZone,
         status: 'available',
         rating: 5.0,
         totalDeliveries: 0,
@@ -274,7 +276,7 @@ export const DeliveryBoysTab: React.FC = () => {
                     Zone:
                   </span>
                   <span className="font-medium text-gray-800 truncate max-w-[150px]">
-                    {rider.currentZone}
+                    {rider.currentZone || rider.assignedFloors || 'Ground to 9th Floor'}
                   </span>
                 </div>
 

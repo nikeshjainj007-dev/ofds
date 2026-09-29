@@ -44,7 +44,7 @@ export const OrdersTab: React.FC = () => {
   const [newSelectedDishId, setNewSelectedDishId] = useState(DISHES[0].id);
   const [newDishQuantity, setNewDishQuantity] = useState(1);
   const [newIsJain, setNewIsJain] = useState(true);
-  const [newPaymentMethod, setNewPaymentMethod] = useState<'Razorpay' | 'UPI' | 'Cash on Delivery'>('UPI');
+  const [newPaymentMethod, setNewPaymentMethod] = useState<'Razorpay' | 'UPI' | 'Cash on Delivery'>('Razorpay');
   const [newNotes, setNewNotes] = useState('');
 
   // Filtered orders
@@ -81,10 +81,11 @@ export const OrdersTab: React.FC = () => {
       customerPhone: newCustomerPhone || '+91 98450 11223',
       deliveryAddress: {
         id: 'addr-' + Date.now(),
-        type: 'Home',
-        title: newCustomerName || 'Counter Pickup / Delivery',
-        addressLine: newAddress || 'Counter Pickup - Indiranagar Kitchen Hub',
-        landmark: 'HAL 2nd Stage'
+        type: 'Campus Desk',
+        title: newCustomerName || 'Campus Pickup',
+        addressLine: newAddress || '4th Floor - Wing A, Room 402',
+        pickupZone: newAddress || '4th Floor - Wing A (ECE & Telecom Dept)',
+        landmark: 'Near Lift A'
       },
       items: [
         {

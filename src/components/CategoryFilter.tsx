@@ -11,8 +11,8 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
   selectedCategory,
   onSelectCategory,
 }) => {
-  const getIcon = (iconName: string) => {
-    switch (iconName) {
+  const renderIcon = (icon: string) => {
+    switch (icon) {
       case 'Leaf':
         return <Leaf className="w-4 h-4" />;
       case 'Utensils':
@@ -30,7 +30,7 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
       case 'Coffee':
         return <Coffee className="w-4 h-4" />;
       default:
-        return <Leaf className="w-4 h-4" />;
+        return <span className="text-sm leading-none">{icon}</span>;
     }
   };
 
@@ -52,23 +52,16 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
             <button
               key={cat.id}
               onClick={() => onSelectCategory(cat.id)}
-              className={`flex items-center gap-2.5 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all flex-shrink-0 ${
+              className={`flex items-center gap-2.5 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all flex-shrink-0 cursor-pointer ${
                 isSelected
                   ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/25 scale-[1.03]'
                   : 'bg-white text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 border border-gray-200/80 shadow-sm'
               }`}
             >
-              <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-600'}`}>
-                {getIcon(cat.icon)}
+              <div className={`p-1.5 rounded-lg flex items-center justify-center ${isSelected ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-600'}`}>
+                {renderIcon(cat.icon)}
               </div>
               <span>{cat.name}</span>
-              <span
-                className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
-                  isSelected ? 'bg-white text-emerald-800' : 'bg-gray-100 text-gray-500'
-                }`}
-              >
-                {cat.count}
-              </span>
             </button>
           );
         })}

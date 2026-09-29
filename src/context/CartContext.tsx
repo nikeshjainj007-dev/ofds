@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { CartItem, Dish, Address, Order } from '../types';
-import { COUPONS } from '../data/mockData';
+import { COUPONS, DEFAULT_CAMPUS_ADDRESS } from '../data/mockData';
+import { INITIAL_ORDERS } from '../data/dashboardMockData';
 
 interface CartContextType {
   items: CartItem[];
@@ -11,8 +12,8 @@ interface CartContextType {
   totalCount: number;
   itemTotal: number;
   discount: number;
-  deliveryFee: number;
-  platformFee: number;
+  deliveryFee: number; // Always ₹0 on campus
+  platformFee: number; // ₹0
   gst: number;
   tip: number;
   setTip: (tip: number) => void;
@@ -28,17 +29,8 @@ interface CartContextType {
   activeOrder: Order | null;
   setActiveOrder: (order: Order | null) => void;
   pastOrders: Order[];
-  placeOrder: (paymentId: string) => Order;
+  placeOrder: (paymentId: string, userMeta?: { name?: string; phone?: string; email?: string; role?: 'Student' | 'Teacher'; usn?: string; pickupZone?: string }) => Order;
 }
-
-const DEFAULT_ADDRESS: Address = {
-  id: 'addr-1',
-  type: 'Home',
-  title: 'Home (Primary)',
-  addressLine: 'Flat 402, Shanti Nilayam, 12th Main, HAL 2nd Stage, Indiranagar',
-  landmark: 'Near BDA Complex, Bengaluru 560038',
-  isDefault: true,
-};
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
@@ -52,27 +44,36 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  const [appliedCoupon, setAppliedCoupon] = useState<string | null>('VEG50');
-  const [tip, setTip] = useState<number>(30);
+  const [appliedCoupon, setAppliedCoupon] = useState<string | null>('CAMPUSFREE');
+  const [tip, setTip] = useState<number>(0);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [addresses] = useState<Address[]>([
-    DEFAULT_ADDRESS,
+    DEFAULT_CAMPUS_ADDRESS,
     {
-      id: 'addr-2',
-      type: 'Work',
-      title: 'Office',
-      addressLine: 'Tower B, 5th Floor, Embassy GolfLinks Tech Park',
-      landmark: 'Domlur, Bengaluru 560071',
+      id: 'campus-desk-2',
+      type: 'Lab',
+      title: 'Computer Lab 2 (Wing B)',
+      pickupZone: '1st Floor - Wing B (Computer Labs 1 & 2)',
+      addressLine: '1st Floor Wing B, Room 108',
+      landmark: 'Next to Server Room',
+    },
+    {
+      id: 'campus-desk-3',
+      type: 'Faculty Room',
+      title: 'Faculty Lounge Wing B',
+      pickupZone: '5th Floor - Wing B (Faculty Lounge)',
+      addressLine: '5th Floor Wing B, Cabin 502',
+      landmark: 'Opposite Library Extension',
     }
   ]);
-  const [selectedAddress, setSelectedAddress] = useState<Address>(DEFAULT_ADDRESS);
+  const [selectedAddress, setSelectedAddress] = useState<Address>(DEFAULT_CAMPUS_ADDRESS);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
   const [pastOrders, setPastOrders] = useState<Order[]>(() => {
     try {
       const saved = localStorage.getItem('satvik_past_orders');
-      return saved ? JSON.parse(saved) : [];
+      return saved ? JSON.parse(saved) : INITIAL_ORDERS;
     } catch {
-      return [];
+      return INITIAL_ORDERS;
     }
   });
 
@@ -122,7 +123,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         {
           dish,
           quantity: 1,
-          isJainOption: options?.isJain ?? false,
+          isJainOption: options?.isJain ?? dish.isJainFriendly ?? false,
           spiceLevel: options?.spiceLevel ?? 'Medium',
           specialNote: options?.specialNote,
         },
@@ -154,27 +155,23 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Calculate Discount
   let discount = 0;
-  let isFreeDeliveryCoupon = false;
-
   if (appliedCoupon && itemTotal > 0) {
     const couponObj = COUPONS.find((c) => c.code === appliedCoupon);
     if (couponObj) {
       if (itemTotal >= (couponObj.minOrder || 0)) {
         if (couponObj.discountPercent) {
-          const calc = (itemTotal * couponObj.discountPercent) / 100;
+          const calc = Math.round((itemTotal * couponObj.discountPercent) / 100);
           discount = couponObj.maxDiscount ? Math.min(calc, couponObj.maxDiscount) : calc;
         } else if (couponObj.flatDiscount) {
           discount = couponObj.flatDiscount;
-        } else if (couponObj.freeDelivery) {
-          isFreeDeliveryCoupon = true;
         }
       }
     }
   }
 
-  // Delivery Fee
-  const deliveryFee = itemTotal === 0 ? 0 : (isFreeDeliveryCoupon || itemTotal >= 399 ? 0 : 35);
-  const platformFee = itemTotal === 0 ? 0 : 5;
+  // Delivery Fee is strictly ₹0 (Campus Policy: No Delivery Charges)
+  const deliveryFee = 0;
+  const platformFee = 0;
   const gst = itemTotal === 0 ? 0 : Math.round(itemTotal * 0.05); // 5% GST
   const grandTotal = Math.max(0, itemTotal - discount + deliveryFee + platformFee + gst + tip);
 
@@ -182,54 +179,77 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const upper = code.trim().toUpperCase();
     const coupon = COUPONS.find((c) => c.code === upper);
     if (!coupon) {
-      return { success: false, message: 'Invalid promo coupon code.' };
+      return { success: false, message: 'Invalid campus promo code.' };
     }
     if (itemTotal < coupon.minOrder) {
       return { success: false, message: `Minimum order value for ${upper} is ₹${coupon.minOrder}` };
     }
     setAppliedCoupon(upper);
-    return { success: true, message: `Promo code ${upper} applied successfully!` };
+    return { success: true, message: `Campus code ${upper} applied!` };
   };
 
   const removeCoupon = () => {
     setAppliedCoupon(null);
   };
 
-  const placeOrder = (paymentId: string): Order => {
+  const placeOrder = (
+    paymentId: string,
+    userMeta?: { name?: string; phone?: string; email?: string; role?: 'Student' | 'Teacher'; usn?: string; pickupZone?: string }
+  ): Order => {
+    const targetPickupZone = userMeta?.pickupZone || selectedAddress.pickupZone || '4th Floor - Wing A (ECE & Telecom Dept)';
+    const assignedRunner = targetPickupZone.includes('Wing B')
+      ? 'Rohan Deshmukh (Wing B Floor Runner)'
+      : 'Karthik Gowda (Wing A Floor Runner)';
+
     const newOrder: Order = {
-      id: 'SB-' + Math.floor(100000 + Math.random() * 900000),
+      id: 'ORD-' + Math.floor(100000 + Math.random() * 900000),
       items: [...items],
       itemTotal,
-      deliveryFee,
-      platformFee,
+      deliveryFee: 0, // ₹0 No Delivery Charges
+      platformFee: 0,
       gst,
       discount,
       tip,
       grandTotal,
-      deliveryAddress: selectedAddress,
+      deliveryAddress: {
+        ...selectedAddress,
+        pickupZone: targetPickupZone,
+      },
+      pickupZone: targetPickupZone,
       paymentId,
       paymentStatus: 'PAID',
+      paymentMethod: 'Razorpay',
       status: 'PLACED',
-      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      riderName: 'Ramesh Kumar (Vaccinated & Veg Care)',
+      createdAt: new Date().toISOString(),
+      riderName: assignedRunner,
       riderPhone: '+91 98450 12345',
-      estimatedMinutes: 24,
+      estimatedMinutes: 15,
+      customerName: userMeta?.name || 'Campus Student',
+      customerPhone: userMeta?.phone || '+91 98450 00000',
+      customerEmail: userMeta?.email || 'student@campus.edu',
+      customerRole: userMeta?.role || 'Student',
+      customerUsn: userMeta?.usn || '1RV23CS001',
+      orderSlot: new Date().getHours() < 12 ? 'Breakfast' : 'Lunch',
+      restaurantName: items[0]?.dish.restaurantName || 'Campus Canteen Main Counter',
     };
 
-    setActiveOrder(newOrder);
     setPastOrders((prev) => [newOrder, ...prev]);
+    setActiveOrder(newOrder);
     clearCart();
 
-    // Broadcast new order to Dashboard
+    // Notify Dashboard
     try {
-      window.dispatchEvent(new CustomEvent('satvik_new_order_placed', { detail: newOrder }));
+      const existingDashOrders = localStorage.getItem('satvik_dashboard_orders');
+      const parsedOrders: Order[] = existingDashOrders ? JSON.parse(existingDashOrders) : [];
+      const updatedDash = [newOrder, ...parsedOrders];
+      localStorage.setItem('satvik_dashboard_orders', JSON.stringify(updatedDash));
+      window.dispatchEvent(new CustomEvent('satvik_orders_updated'));
     } catch (e) {
-      console.error(e);
+      console.error('Failed to notify dashboard of new order', e);
     }
 
     return newOrder;
   };
-
 
   return (
     <CartContext.Provider

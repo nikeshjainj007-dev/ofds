@@ -10,15 +10,18 @@ import {
   ShoppingBag, 
   ShieldCheck, 
   CreditCard,
-  Heart,
   Sparkles,
   MapPin,
-  Loader2
+  Loader2,
+  Building,
+  AlertCircle
 } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { useDashboard } from '../context/DashboardContext';
 import { initiateRazorpayPayment } from '../lib/razorpay';
+import { getCampusScheduleStatus } from '../lib/campusSchedule';
 import { COUPONS } from '../data/mockData';
 import confetti from 'canvas-confetti';
 
@@ -34,11 +37,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
     clearCart,
     itemTotal, 
     discount, 
-    deliveryFee, 
-    platformFee, 
     gst, 
-    tip, 
-    setTip, 
     grandTotal, 
     appliedCoupon, 
     applyCoupon, 
@@ -51,10 +50,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
 
   const { user, openAuthModal } = useAuth();
   const { showToast } = useToast();
+  const { canteenSettings } = useDashboard();
 
   const [couponInput, setCouponInput] = useState('');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [specialInstruction, setSpecialInstruction] = useState('');
+
+  const schedule = getCampusScheduleStatus(new Date(), canteenSettings.demoBypassTiming);
 
   if (!isCartOpen) return null;
 
@@ -74,10 +76,20 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
       return;
     }
 
-    // Require Auth before payment
+    // Require Auth before payment (Phase 2)
     if (!user) {
-      showToast('Please log in with OTP to complete your order', 'info', 'Authentication Required');
+      showToast('Please log in with your Student/Teacher ID to order', 'info', 'Authentication Required');
       openAuthModal();
+      return;
+    }
+
+    // Schedule Enforcement (Phase 4): 20 mins cutoff rule
+    if (!schedule.canOrderAny && !canteenSettings.demoBypassTiming) {
+      showToast(
+        schedule.cutoffWarning || 'Ordering is currently closed for this meal slot.',
+        'error',
+        'Order Cutoff Reached'
+      );
       return;
     }
 
@@ -86,15 +98,23 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
     try {
       await initiateRazorpayPayment({
         amountInRupees: grandTotal,
-        userName: user.name || 'Satvik Customer',
-        userEmail: user.email || 'customer@satvikbite.com',
-        userPhone: user.phone || '9876543210',
-        description: `SatvikBite Pure Veg Order (${items.length} items)`,
+        userName: user.name || 'Campus Student',
+        userEmail: user.email || 'student@campus.edu',
+        userPhone: user.phone || '9845012345',
+        description: `Campus Canteen Pure Veg Order (${items.length} items to ${user.pickupZone || selectedAddress.pickupZone})`,
         onSuccess: (paymentId) => {
           setIsProcessingPayment(false);
-          placeOrder(paymentId);
+          placeOrder(paymentId, {
+            name: user.name,
+            phone: user.phone,
+            email: user.email,
+            role: user.role,
+            usn: user.usn,
+            pickupZone: user.pickupZone || selectedAddress.pickupZone,
+          });
           setIsCartOpen(false);
-          // Trigger celebration confetti
+
+          // Confetti celebration
           try {
             confetti({
               particleCount: 80,
@@ -104,12 +124,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
           } catch (e) {
             // ignore
           }
-          showToast(`Order placed successfully! Payment ID: ${paymentId}`, 'success', 'Payment Received');
+          showToast(`Order placed successfully! Razorpay Ref: ${paymentId}`, 'success', 'Payment Verified');
           onOrderSuccess();
         },
         onFailure: (err) => {
           setIsProcessingPayment(false);
-          showToast(err?.message || 'Payment was cancelled or could not be completed.', 'error', 'Payment Unsuccessful');
+          showToast(err?.message || 'Payment was cancelled or failed.', 'error', 'Payment Unsuccessful');
         }
       });
     } catch (err: any) {
@@ -132,9 +152,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                 <ShoppingBag className="w-5 h-5 text-emerald-300" />
               </div>
               <div>
-                <h3 className="font-extrabold text-base leading-tight">My Veg Platter</h3>
+                <h3 className="font-extrabold text-base leading-tight">Campus Canteen Cart</h3>
                 <p className="text-[11px] text-emerald-300">
-                  {items.length} {items.length === 1 ? 'item' : 'items'} • 100% Pure Veg
+                  {items.length} {items.length === 1 ? 'item' : 'items'} • 100% Pure Veg & Jain
                 </p>
               </div>
             </div>
@@ -149,6 +169,28 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
 
           {/* Cart Content (Scrollable) */}
           <div className="flex-1 overflow-y-auto p-5 space-y-6">
+            {/* Free Delivery & Zero COD Policy Banner (Phase 3 & Context) */}
+            <div className="bg-emerald-50 rounded-2xl p-3.5 border border-emerald-200 text-xs space-y-1">
+              <div className="flex items-center gap-2 font-black text-emerald-900">
+                <Building className="w-4 h-4 text-emerald-700" />
+                <span>₹0 Delivery Charge • Ground to 9th Floor (A & B Wings)</span>
+              </div>
+              <p className="text-[11px] text-emerald-800 leading-normal">
+                Campus Policy: <strong>Pay online via Razorpay ONLY. NO Cash on Delivery (COD).</strong>
+              </p>
+            </div>
+
+            {/* Schedule Warning if near or past cutoff */}
+            {schedule.cutoffWarning && (
+              <div className="bg-amber-50 rounded-2xl p-3 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Meal Slot Notice: </span>
+                  <span>{schedule.cutoffWarning}</span>
+                </div>
+              </div>
+            )}
+
             {items.length === 0 ? (
               <div className="text-center py-16 space-y-3">
                 <div className="w-20 h-20 mx-auto rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
@@ -156,13 +198,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                 </div>
                 <h4 className="font-extrabold text-gray-900 text-lg">Your cart is empty</h4>
                 <p className="text-xs text-gray-500 max-w-xs mx-auto">
-                  Good food is always cooking! Add delicious pure veg dishes from our menu to begin.
+                  Add fresh breakfast or lunch dishes from our campus canteen menu to get started!
                 </p>
                 <button
                   onClick={() => setIsCartOpen(false)}
-                  className="mt-4 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md transition-all"
+                  className="mt-4 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer"
                 >
-                  Explore Pure Veg Menu
+                  Browse Canteen Menu
                 </button>
               </div>
             ) : (
@@ -171,11 +213,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                      Selected Items
+                      Selected Canteen Dishes
                     </span>
                     <button
                       onClick={clearCart}
-                      className="text-[11px] font-bold text-rose-500 hover:text-rose-700 flex items-center gap-1"
+                      className="text-[11px] font-bold text-rose-500 hover:text-rose-700 flex items-center gap-1 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       Clear Cart
@@ -207,17 +249,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                             {item.isJainOption && (
                               <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
                                 <Sparkles className="w-2.5 h-2.5" />
-                                Jain Preparation
+                                Pure Jain
                               </span>
                             )}
                             {item.spiceLevel && (
                               <span className="bg-gray-100 text-gray-700 text-[10px] font-medium px-1.5 py-0.5 rounded">
-                                {item.spiceLevel} spice
-                              </span>
-                            )}
-                            {item.specialNote && (
-                              <span className="bg-emerald-50 text-emerald-800 text-[10px] font-medium px-1.5 py-0.5 rounded italic">
-                                "{item.specialNote}"
+                                {item.spiceLevel}
                               </span>
                             )}
                           </div>
@@ -253,16 +290,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                   </div>
                 </div>
 
-                {/* 2. Special Instructions for Restaurant */}
+                {/* 2. Special Instructions */}
                 <div className="bg-gray-50 rounded-2xl p-3 border border-gray-100">
                   <label className="block text-[11px] font-bold text-gray-600 uppercase tracking-wider mb-1.5">
-                    Cooking / Delivery Instructions
+                    Floor Pickup & Kitchen Note
                   </label>
                   <input
                     type="text"
                     value={specialInstruction}
                     onChange={(e) => setSpecialInstruction(e.target.value)}
-                    placeholder="e.g. Ring doorbell, keep cutlery separate, extra napkins"
+                    placeholder="e.g. Leave with Lab Assistant, extra green chutney, hot sambar"
                     className="w-full px-3 py-2 bg-white rounded-xl border border-gray-200 text-xs outline-none focus:border-emerald-600"
                   />
                 </div>
@@ -271,7 +308,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                 <div className="bg-emerald-50/50 rounded-2xl p-4 border border-emerald-100">
                   <div className="flex items-center gap-2 mb-2 text-xs font-black text-emerald-950">
                     <Tag className="w-4 h-4 text-emerald-700" />
-                    <span>Apply Promo Coupon</span>
+                    <span>Campus Discount Code</span>
                   </div>
 
                   {appliedCoupon ? (
@@ -285,13 +322,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                             '{appliedCoupon}' APPLIED
                           </div>
                           <div className="text-[10px] text-emerald-700">
-                            Saved ₹{discount} with this coupon
+                            Saved ₹{discount} with student code
                           </div>
                         </div>
                       </div>
                       <button
                         onClick={removeCoupon}
-                        className="text-xs font-bold text-rose-600 hover:text-rose-700"
+                        className="text-xs font-bold text-rose-600 hover:text-rose-700 cursor-pointer"
                       >
                         Remove
                       </button>
@@ -308,13 +345,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                         />
                         <button
                           onClick={() => handleApplyCoupon(couponInput)}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm"
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
                         >
                           Apply
                         </button>
                       </div>
 
-                      {/* Quick Available Coupon Chips */}
                       <div className="flex flex-wrap gap-2 pt-1">
                         {COUPONS.map((c) => (
                           <button
@@ -322,7 +358,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                             onClick={() => handleApplyCoupon(c.code)}
                             className="text-[10px] font-bold px-2 py-1 rounded-lg bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-100 transition-colors"
                           >
-                            🏷️ {c.code} ({c.title})
+                            🏷️ {c.code} ({c.discountPercent ? `${c.discountPercent}% OFF` : `₹${c.flatDiscount} OFF`})
                           </button>
                         ))}
                       </div>
@@ -330,86 +366,60 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                   )}
                 </div>
 
-                {/* 4. Tip Delivery Partner */}
-                <div>
-                  <div className="flex items-center justify-between text-xs font-bold text-gray-700 mb-2">
-                    <span className="flex items-center gap-1.5">
-                      <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
-                      Tip your Pure Veg Rider
-                    </span>
-                    <span className="text-[11px] text-gray-500">100% goes to rider</span>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2">
-                    {[0, 20, 30, 50].map((amount) => (
-                      <button
-                        key={amount}
-                        type="button"
-                        onClick={() => setTip(amount)}
-                        className={`py-1.5 px-2 rounded-xl text-xs font-bold border transition-all ${
-                          tip === amount
-                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                            : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                        }`}
-                      >
-                        {amount === 0 ? 'No tip' : `₹${amount}`}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 5. Bill Details */}
+                {/* 4. Bill Details */}
                 <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 space-y-2 text-xs">
-                  <div className="font-bold text-gray-900 uppercase tracking-wider text-[11px] pb-1 border-b border-gray-200">
-                    Bill Details
+                  <div className="font-bold text-gray-900 uppercase tracking-wider text-[11px] pb-1 border-b border-gray-200 flex justify-between">
+                    <span>Canteen Subsidized Bill</span>
+                    <span className="text-emerald-700 font-extrabold">Student Rate</span>
                   </div>
 
                   <div className="flex justify-between text-gray-600">
-                    <span>Item Total</span>
+                    <span>Food Total</span>
                     <span className="font-semibold text-gray-900">₹{itemTotal}</span>
                   </div>
 
                   {discount > 0 && (
                     <div className="flex justify-between text-emerald-700 font-semibold">
-                      <span>Coupon Discount</span>
+                      <span>Campus Discount</span>
                       <span>-₹{discount}</span>
                     </div>
                   )}
 
                   <div className="flex justify-between text-gray-600">
-                    <span>Delivery Partner Fee</span>
-                    <span>{deliveryFee === 0 ? <span className="text-emerald-700 font-bold">FREE</span> : `₹${deliveryFee}`}</span>
+                    <span>Campus Floor Delivery Charge</span>
+                    <span className="font-bold text-emerald-700">₹0 (FREE)</span>
                   </div>
 
                   <div className="flex justify-between text-gray-600">
-                    <span>Platform Fee</span>
-                    <span className="font-semibold text-gray-900">₹{platformFee}</span>
+                    <span>Campus Platform Service Fee</span>
+                    <span className="font-bold text-emerald-700">₹0</span>
                   </div>
 
                   <div className="flex justify-between text-gray-600">
-                    <span>Govt Taxes & Restaurant GST (5%)</span>
+                    <span>Canteen GST (5%)</span>
                     <span className="font-semibold text-gray-900">₹{gst}</span>
                   </div>
 
-                  {tip > 0 && (
-                    <div className="flex justify-between text-gray-600">
-                      <span>Rider Tip</span>
-                      <span className="font-semibold text-gray-900">₹{tip}</span>
-                    </div>
-                  )}
-
                   <div className="pt-2 border-t border-gray-200 flex justify-between items-center text-sm font-black text-gray-900">
-                    <span>To Pay</span>
+                    <span>Total Amount (Razorpay Only)</span>
                     <span className="text-base text-emerald-700">₹{grandTotal}</span>
                   </div>
                 </div>
 
-                {/* Delivery Address Preview */}
-                <div className="bg-white rounded-2xl p-3 border border-gray-200 flex items-start gap-2.5">
-                  <MapPin className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                  <div className="text-xs">
-                    <span className="font-bold text-gray-900">{selectedAddress.title}: </span>
-                    <span className="text-gray-600">{selectedAddress.addressLine}</span>
+                {/* 5. Pickup Location Preview */}
+                <div className="bg-white rounded-2xl p-3.5 border border-gray-200 space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-bold text-gray-900">
+                    <MapPin className="w-4 h-4 text-emerald-600" />
+                    <span>Delivery Pickup Destination:</span>
                   </div>
+                  <p className="text-xs text-gray-600 pl-6">
+                    {user?.pickupZone || selectedAddress.pickupZone || '4th Floor - Wing A (ECE & Telecom Dept)'}
+                  </p>
+                  {user?.usn && (
+                    <p className="text-[10px] text-gray-400 pl-6">
+                      Recipient: {user.name} ({user.role}: {user.usn})
+                    </p>
+                  )}
                 </div>
               </>
             )}
@@ -419,11 +429,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
           {items.length > 0 && (
             <div className="p-5 border-t border-gray-100 bg-white space-y-3">
               <div className="flex items-center justify-between text-xs text-gray-500">
-                <span className="flex items-center gap-1">
+                <span className="flex items-center gap-1 font-bold text-emerald-800">
                   <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
-                  Razorpay Secure Test Gateway
+                  Razorpay Payment • NO Cash On Delivery (COD)
                 </span>
-                <span className="font-bold text-gray-900">
+                <span className="font-black text-gray-900">
                   Total: ₹{grandTotal}
                 </span>
               </div>
@@ -432,23 +442,23 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
                 type="button"
                 onClick={handleProceedToPayment}
                 disabled={isProcessingPayment}
-                className="w-full py-4 px-6 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 active:scale-[0.99] text-white font-black text-sm rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-between transition-all disabled:opacity-75 disabled:cursor-not-allowed"
+                className="w-full py-4 px-6 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 active:scale-[0.99] text-white font-black text-sm rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-between transition-all disabled:opacity-75 disabled:cursor-not-allowed cursor-pointer"
               >
                 {isProcessingPayment ? (
                   <div className="w-full flex items-center justify-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Connecting Razorpay...</span>
+                    <span>Connecting Razorpay Gateway...</span>
                   </div>
                 ) : (
                   <>
                     <div className="text-left">
                       <div className="text-[10px] uppercase font-bold text-emerald-200 tracking-wider">
-                        {user ? 'Proceed to Payment' : 'Login & Pay'}
+                        {user ? 'Pay with Razorpay (NO COD)' : 'Login & Pay Online'}
                       </div>
                       <div className="text-base font-black">₹{grandTotal}</div>
                     </div>
-                    <div className="flex items-center gap-1 bg-white/20 px-3 py-1.5 rounded-xl font-bold text-xs backdrop-blur-sm">
-                      <span>Pay with Razorpay</span>
+                    <div className="flex items-center gap-1 bg-white/20 px-3.5 py-1.5 rounded-xl font-bold text-xs backdrop-blur-sm">
+                      <span>Pay Online via Razorpay</span>
                       <ArrowRight className="w-4 h-4" />
                     </div>
                   </>
@@ -457,7 +467,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
 
               <div className="flex items-center justify-center gap-2 text-[10px] text-gray-400">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Encrypted 256-bit payment • Instant Pure Veg Confirmation</span>
+                <span>100% Cashless Campus • Instant Order Dispatch to Floor</span>
               </div>
             </div>
           )}

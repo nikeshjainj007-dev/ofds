@@ -35,8 +35,8 @@ export const CanteenStaffTab: React.FC = () => {
   // Form State
   const [name, setName] = useState('');
   const [role, setRole] = useState<CanteenStaff['role']>('Sous Chef');
-  const [shift, setShift] = useState<CanteenStaff['shift']>('Morning (06:00 AM - 02:00 PM)');
-  const [station, setStation] = useState<CanteenStaff['station']>('Thali & Curry Prep');
+  const [shift, setShift] = useState<string>('Morning Breakfast (07:00 AM - 11:30 AM)');
+  const [station, setStation] = useState<string>('Lunch Thali & Meals');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [avatar, setAvatar] = useState('');
@@ -68,8 +68,8 @@ export const CanteenStaffTab: React.FC = () => {
   const handleOpenAddModal = () => {
     setName('');
     setRole('Sous Chef');
-    setShift('Morning (06:00 AM - 02:00 PM)');
-    setStation('Thali & Curry Prep');
+    setShift('Morning Breakfast (07:00 AM - 11:30 AM)');
+    setStation('Lunch Thali & Meals');
     setPhone('+91 98');
     setEmail('');
     setAvatar('https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=300&q=80');
