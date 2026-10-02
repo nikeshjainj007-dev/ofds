@@ -4,12 +4,12 @@ import { defineConfig, loadEnv } from 'vite';
 import type { Plugin } from 'vite';
 
 function twilioEmailOtpPlugin(env: Record<string, string>): Plugin {
-  const defaultSid = ['A', 'C', 'fc6515', 'df093c58', 'a83a17da9', 'afc176cda'].join('');
-  const defaultToken = ['815dcb06', '43b0e531', '979e64d4', '8ca8d579'].join('');
-
-  const accountSid = env.TWILIO_ACCOUNT_SID || defaultSid;
-  const authToken = env.TWILIO_AUTH_TOKEN || defaultToken;
-  const secretKey = authToken || 'satvikbite-email-otp-secret-key';
+  const accountSid = env.TWILIO_ACCOUNT_SID;
+  const authToken = env.TWILIO_AUTH_TOKEN;
+  const sendGridApiKey = env.SENDGRID_API_KEY || env.TWILIO_SENDGRID_API_KEY;
+  const sendGridFrom = env.SENDGRID_FROM_EMAIL || env.TWILIO_EMAIL_FROM || 'auth@campus-canteen.edu';
+  const verifyServiceSid = env.TWILIO_VERIFY_SERVICE_SID;
+  const secretKey = env.OTP_SECRET_KEY || authToken || 'satvikbite-secure-auth-secret-hmac-key';
 
   return {
     name: 'twilio-email-otp-plugin',
@@ -32,49 +32,111 @@ function twilioEmailOtpPlugin(env: Record<string, string>): Plugin {
               }
 
               const targetEmail = String(email).trim().toLowerCase();
-              console.log(`[Twilio Email OTP Dev] Sending OTP verification to ${targetEmail}...`);
+
+              // Secure dynamic 6-digit OTP generation
+              const otpCode = crypto.randomInt(100000, 1000000).toString();
+
+              // Exact email body requirement: Your code is #<otp code>
+              const emailBodyText = `Your code is #${otpCode}`;
+              const emailBodyHtml = `<div style="font-family: sans-serif; font-size: 16px; color: #1f2937; padding: 24px; max-width: 480px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 12px;">
+                <h2 style="color: #065f46; margin-top: 0;">Campus Canteen Security Verification</h2>
+                <p style="font-size: 18px; font-weight: bold; margin: 24px 0; color: #111827;">Your code is #${otpCode}</p>
+                <p style="font-size: 13px; color: #6b7280; margin-bottom: 0;">This code is valid for 10 minutes. If you did not request this code, please ignore this email.</p>
+              </div>`;
 
               let twilioDelivered = false;
-              let providerUsed = 'fallback';
+              let providerUsed = 'none';
 
-              try {
-                const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-                const approvedHtml = '<p><b>This is a test email from Twilio.</b></p><h2>Thank you for your order!</h2><p>We are excited to let you know that your order has been confirmed and is being processed.</p><p>You will receive a shipping confirmation email once your items are on their way.</p><p>Order Number: #12345</p><p>Thank you for shopping with us!</p><p>Best regards,<br/>The Team</p>';
-
-                const twilioRes = await fetch('https://comms.twilio.com/v1/Emails', {
-                  method: 'POST',
-                  headers: {
-                    Authorization: authHeader,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    from: {
-                      address: `${accountSid}@twilio.email`,
-                      name: 'Trial with Twilio',
+              // Prioritize Twilio SendGrid
+              if (sendGridApiKey) {
+                try {
+                  const sgRes = await fetch('https://api.sendgrid.com/v3/mail/send', {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${sendGridApiKey}`,
+                      'Content-Type': 'application/json',
                     },
-                    to: [{ address: targetEmail }],
-                    content: {
-                      subject: 'Your Order Has Been Confirmed!',
-                      html: approvedHtml,
-                    },
-                  }),
-                });
-
-                const twilioData: any = await twilioRes.json();
-                console.log('[Twilio Email OTP Dev] Response:', twilioRes.status, twilioData);
-                if (twilioRes.status === 202 || twilioRes.status === 200 || twilioRes.status === 201) {
-                  twilioDelivered = true;
-                  providerUsed = 'twilio_email';
+                    body: JSON.stringify({
+                      personalizations: [{ to: [{ email: targetEmail }] }],
+                      from: { email: sendGridFrom, name: 'Campus Canteen Auth' },
+                      subject: 'Your Verification Code',
+                      content: [
+                        { type: 'text/plain', value: emailBodyText },
+                        { type: 'text/html', value: emailBodyHtml },
+                      ],
+                    }),
+                  });
+                  if (sgRes.status >= 200 && sgRes.status < 300) {
+                    twilioDelivered = true;
+                    providerUsed = 'twilio_sendgrid';
+                  }
+                } catch (sgErr: any) {
+                  console.warn('[Twilio SendGrid Dev] Error:', sgErr.message);
                 }
-              } catch (err) {
-                console.warn('[Twilio Email OTP Dev] Error:', err);
               }
 
-              const primaryCode = '123456';
-              const expiresAt = Date.now() + 15 * 60 * 1000;
-              const dataToSign = `${targetEmail}:${primaryCode}:${expiresAt}`;
-              const hmac = crypto.createHmac('sha256', secretKey).update(dataToSign).digest('hex');
-              const otpToken = `${hmac}.${expiresAt}.${primaryCode}`;
+              // Try Twilio Verify Service Email Channel
+              if (!twilioDelivered && accountSid && authToken && verifyServiceSid) {
+                try {
+                  const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+                  const formParams = new URLSearchParams();
+                  formParams.append('To', targetEmail);
+                  formParams.append('Channel', 'email');
+
+                  const vRes = await fetch(`https://verify.twilio.com/v2/Services/${verifyServiceSid}/Verifications`, {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': authHeader,
+                      'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: formParams.toString(),
+                  });
+                  if (vRes.status >= 200 && vRes.status < 300) {
+                    twilioDelivered = true;
+                    providerUsed = 'twilio_verify_email';
+                  }
+                } catch (vErr: any) {
+                  console.warn('[Twilio Verify Email Dev] Error:', vErr.message);
+                }
+              }
+
+              // Try Twilio Comms Email API
+              if (!twilioDelivered && accountSid && authToken) {
+                try {
+                  const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+                  const commsRes = await fetch('https://comms.twilio.com/v1/Emails', {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': authHeader,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      from: {
+                        address: env.TWILIO_EMAIL_FROM || `${accountSid}@twilio.email`,
+                        name: 'Campus Canteen Auth',
+                      },
+                      to: [{ address: targetEmail }],
+                      content: {
+                        subject: 'Your Verification Code',
+                        text: emailBodyText,
+                        html: emailBodyHtml,
+                      },
+                    }),
+                  });
+                  if (commsRes.status >= 200 && commsRes.status < 300) {
+                    twilioDelivered = true;
+                    providerUsed = 'twilio_comms_email';
+                  }
+                } catch (cErr: any) {
+                  console.warn('[Twilio Comms Email Dev] Error:', cErr.message);
+                }
+              }
+
+              // Stateless cryptographic HMAC token - otpCode is NEVER exposed
+              const expiresAt = Date.now() + 10 * 60 * 1000;
+              const dataToSign = `${targetEmail}:${otpCode}:${expiresAt}`;
+              const hmacSignature = crypto.createHmac('sha256', secretKey).update(dataToSign).digest('hex');
+              const otpToken = `${hmacSignature}.${expiresAt}`;
 
               res.statusCode = 200;
               res.end(JSON.stringify({
@@ -83,7 +145,7 @@ function twilioEmailOtpPlugin(env: Record<string, string>): Plugin {
                 otpToken,
                 twilioDelivered,
                 providerUsed,
-                message: `Verification code sent to ${targetEmail}! Please check your email inbox and Spam folder.`,
+                message: `Verification code sent to ${targetEmail}. Please check your email inbox and Spam folder.`,
               }));
             } catch (err: any) {
               console.error('[Twilio Email OTP Dev Error]:', err);
@@ -114,44 +176,68 @@ function twilioEmailOtpPlugin(env: Record<string, string>): Plugin {
               const targetEmail = String(email).trim().toLowerCase();
               const trimmedCode = String(code).trim().replace(/^#/, '');
 
-              console.log(`[Twilio Email OTP Dev] Verifying code for ${targetEmail}...`);
+              let isVerified = false;
 
-              const validCodes = ['12345', '123456', '012345'];
-              if (validCodes.includes(trimmedCode)) {
-                res.statusCode = 200;
-                res.end(JSON.stringify({
-                  success: true,
-                  email: targetEmail,
-                  message: 'Email verified successfully! Welcome to SatvikBite.',
-                }));
-                return;
-              }
-
-              if (otpToken) {
-                const parts = String(otpToken).split('.');
-                if (parts.length === 3) {
-                  const [hmac, expiresAtStr, storedCode] = parts;
+              // Validate Signed Cryptographic HMAC Token
+              if (otpToken && typeof otpToken === 'string') {
+                const parts = otpToken.split('.');
+                if (parts.length === 2) {
+                  const [providedHmac, expiresAtStr] = parts;
                   const expiresAt = parseInt(expiresAtStr, 10);
-                  if (Date.now() <= expiresAt && (storedCode === trimmedCode || validCodes.includes(trimmedCode))) {
-                    const expectedData = `${targetEmail}:${storedCode}:${expiresAt}`;
+                  if (!isNaN(expiresAt) && Date.now() <= expiresAt) {
+                    const expectedData = `${targetEmail}:${trimmedCode}:${expiresAt}`;
                     const expectedHmac = crypto.createHmac('sha256', secretKey).update(expectedData).digest('hex');
-                    if (hmac === expectedHmac) {
-                      res.statusCode = 200;
-                      res.end(JSON.stringify({
-                        success: true,
-                        email: targetEmail,
-                        message: 'Email verified successfully! Welcome to SatvikBite.',
-                      }));
-                      return;
+                    const providedBuf = Buffer.from(providedHmac, 'hex');
+                    const expectedBuf = Buffer.from(expectedHmac, 'hex');
+                    if (providedBuf.length === expectedBuf.length && crypto.timingSafeEqual(providedBuf, expectedBuf)) {
+                      isVerified = true;
                     }
                   }
                 }
               }
 
+              // Validate via Twilio Verify Check if configured
+              if (!isVerified && accountSid && authToken && verifyServiceSid) {
+                try {
+                  const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+                  const formParams = new URLSearchParams();
+                  formParams.append('To', targetEmail);
+                  formParams.append('Code', trimmedCode);
+
+                  const vCheckRes = await fetch(
+                    `https://verify.twilio.com/v2/Services/${verifyServiceSid}/VerificationCheck`,
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': authHeader,
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                      },
+                      body: formParams.toString(),
+                    }
+                  );
+                  const vCheckData: any = await vCheckRes.json();
+                  if (vCheckData.status === 'approved') {
+                    isVerified = true;
+                  }
+                } catch (vErr: any) {
+                  console.warn('[Twilio Verify Check Dev] Error:', vErr.message);
+                }
+              }
+
+              if (isVerified) {
+                res.statusCode = 200;
+                res.end(JSON.stringify({
+                  success: true,
+                  email: targetEmail,
+                  message: 'Email verified successfully!',
+                }));
+                return;
+              }
+
               res.statusCode = 400;
               res.end(JSON.stringify({
                 success: false,
-                message: 'Invalid or expired OTP code. Please check your email inbox and try again.',
+                message: 'Invalid or expired verification code. Please check your inbox and try again.',
               }));
             } catch (err: any) {
               console.error('[Twilio Email OTP Dev Verification Error]:', err);

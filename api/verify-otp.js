@@ -71,69 +71,98 @@ export default async function handler(req, res) {
     const targetEmail = String(email).trim().toLowerCase();
     const trimmedCode = String(code).trim().replace(/^#/, '');
 
-    const defaultToken = ['815dcb06', '43b0e531', '979e64d4', '8ca8d579'].join('');
-    const authToken = process.env.TWILIO_AUTH_TOKEN || defaultToken;
-    const secretKey = authToken || 'satvikbite-email-otp-secret-key';
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
+    const secretKey = process.env.OTP_SECRET_KEY || authToken || 'satvikbite-secure-auth-secret-hmac-key';
 
-    console.log(`[Twilio Email OTP] Verifying code for ${targetEmail}...`);
+    let isVerified = false;
 
-    // 1. Check against Twilio Email delivered OTP code (#12345 / 123456 / 012345)
-    const validCodes = ['12345', '123456', '012345'];
-    if (validCodes.includes(trimmedCode)) {
-      return sendJson(res, 200, {
-        success: true,
-        email: targetEmail,
-        message: 'Email verified successfully! Welcome to SatvikBite.',
-      });
-    }
-
-    // 2. Validate with Supabase verifyOtp
-    try {
-      const { data: supaData, error: supaErr } = await supabase.auth.verifyOtp({
-        email: targetEmail,
-        token: trimmedCode,
-        type: 'email',
-      });
-      if (!supaErr && (supaData?.session || supaData?.user)) {
-        return sendJson(res, 200, {
-          success: true,
-          email: targetEmail,
-          message: 'Email verified successfully! Welcome to SatvikBite.',
-        });
-      }
-    } catch (sErr) {
-      console.warn('[Supabase Verify Check Error]:', sErr);
-    }
-
-    // 3. Validate Signed HMAC Token
-    if (otpToken) {
-      const parts = String(otpToken).split('.');
-      if (parts.length === 3) {
-        const [hmac, expiresAtStr, storedCode] = parts;
+    // 1. Validate Signed Cryptographic HMAC Token
+    if (otpToken && typeof otpToken === 'string') {
+      const parts = otpToken.split('.');
+      if (parts.length === 2) {
+        const [providedHmac, expiresAtStr] = parts;
         const expiresAt = parseInt(expiresAtStr, 10);
-        if (Date.now() <= expiresAt && (storedCode === trimmedCode || validCodes.includes(trimmedCode))) {
-          const expectedData = `${targetEmail}:${storedCode}:${expiresAt}`;
+
+        if (!isNaN(expiresAt) && Date.now() <= expiresAt) {
+          const expectedData = `${targetEmail}:${trimmedCode}:${expiresAt}`;
           const expectedHmac = crypto.createHmac('sha256', secretKey).update(expectedData).digest('hex');
-          if (hmac === expectedHmac) {
-            return sendJson(res, 200, {
-              success: true,
-              email: targetEmail,
-              message: 'Email verified successfully! Welcome to SatvikBite.',
-            });
+
+          const providedBuf = Buffer.from(providedHmac, 'hex');
+          const expectedBuf = Buffer.from(expectedHmac, 'hex');
+
+          if (providedBuf.length === expectedBuf.length && crypto.timingSafeEqual(providedBuf, expectedBuf)) {
+            isVerified = true;
           }
         }
       }
     }
 
+    // 2. Validate via Twilio Verify VerificationCheck API if configured
+    if (!isVerified && accountSid && authToken && verifyServiceSid) {
+      try {
+        const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+        const formParams = new URLSearchParams();
+        formParams.append('To', targetEmail);
+        formParams.append('Code', trimmedCode);
+
+        const vCheckRes = await fetch(
+          `https://verify.twilio.com/v2/Services/${verifyServiceSid}/VerificationCheck`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': authHeader,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: formParams.toString(),
+          }
+        );
+
+        const vCheckData = await vCheckRes.json();
+        if (vCheckData.status === 'approved') {
+          isVerified = true;
+        }
+      } catch (vErr) {
+        console.warn('[Twilio Verify Check Exception]:', vErr.message);
+      }
+    }
+
+    // 3. Validate via Supabase Auth verifyOtp if fallback was triggered
+    if (!isVerified && SUPABASE_URL && SUPABASE_ANON_KEY) {
+      try {
+        const { data: supaData, error: supaErr } = await supabase.auth.verifyOtp({
+          email: targetEmail,
+          token: trimmedCode,
+          type: 'email',
+        });
+        if (!supaErr && (supaData?.session || supaData?.user)) {
+          isVerified = true;
+        }
+      } catch (sErr) {
+        console.warn('[Supabase Verify Check Error]:', sErr.message);
+      }
+    }
+
+    // STRICT SECURITY CONSTRAINT: No hardcoded bypass codes allowed
+    if (isVerified) {
+      return sendJson(res, 200, {
+        success: true,
+        email: targetEmail,
+        message: 'Email verified successfully!',
+      });
+    }
+
     return sendJson(res, 400, {
       success: false,
-      message: 'Invalid or expired OTP code. Please check your email inbox and try again.',
+      message: 'Invalid or expired verification code. Please check your inbox and try again.',
     });
   } catch (err) {
     console.error('[Verify Email OTP Error]:', err);
     return sendJson(res, 500, {
       success: false,
-      message: err.message || 'Internal error verifying email OTP',
+      message: 'Internal error verifying email OTP',
     });
   }
 }
+

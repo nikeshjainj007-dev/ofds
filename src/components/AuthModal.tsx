@@ -3,19 +3,12 @@ import {
   X,
   Mail,
   User,
-  Phone,
   Calendar,
-  GraduationCap,
-  Briefcase,
-  Hash,
   Loader2,
   ArrowRight,
   ShieldCheck,
-  Sparkles,
   RefreshCw,
   CheckCircle2,
-  MessageSquare,
-  Building
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -24,47 +17,51 @@ import { CAMPUS_PICKUP_ZONES } from '../types';
 export const AuthModal: React.FC = () => {
   const {
     isAuthModalOpen,
+    authModalMode,
     closeAuthModal,
     sendOtp,
     verifyOtp,
     signInWithGoogle,
-    generatedOtpCode,
+    needsDobFallback,
+    dobFallbackUser,
+    submitDobFallback,
+    closeDobFallback,
   } = useAuth();
   const { showToast } = useToast();
 
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
-  const [step, setStep] = useState<1 | 2>(1); // 1: Details, 2: OTP Verification
+  const [step, setStep] = useState<1 | 2>(1); // 1: Details form, 2: Strictly controlled OTP Verification
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-  // Form State
-  const [role, setRole] = useState<'Student' | 'Teacher'>('Student');
-  const [identifierType, setIdentifierType] = useState<'email' | 'phone'>('email');
-  const [identifier, setIdentifier] = useState('');
+  // Form State (Feature 1: Name, DOB, Email ID)
+  const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
-  const [usn, setUsn] = useState('');
   const [dob, setDob] = useState('2003-05-15');
-  const [pickupZone, setPickupZone] = useState<string>(CAMPUS_PICKUP_ZONES[8]); // 4th Floor Wing A default
-  const [receivedOtpDisplay, setReceivedOtpDisplay] = useState<string>('');
+  const role: 'Student' | 'Teacher' = 'Student';
+  const pickupZone = CAMPUS_PICKUP_ZONES[8];
 
-  // 6-digit OTP boxes
+  // Fallback UI State for Google OAuth DOB
+  const [fallbackDob, setFallbackDob] = useState('2003-05-15');
+  const [isFallbackSubmitting, setIsFallbackSubmitting] = useState(false);
+
+  // 6-digit OTP inputs
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
   const [resendTimer, setResendTimer] = useState(30);
-
   const otpInputsRef = useRef<(HTMLInputElement | null)[]>([]);
 
-  const handleClose = () => {
-    closeAuthModal();
+  // Synchronize initial mode when opened without cascading effect renders
+  const [prevOpenState, setPrevOpenState] = useState(false);
+  if (isAuthModalOpen && !prevOpenState) {
+    setPrevOpenState(true);
+    setAuthMode(authModalMode);
     setStep(1);
-    setAuthMode('login');
-    setIdentifier('');
-    setFullName('');
     setOtpDigits(['', '', '', '', '', '']);
-    setIsLoading(false);
-    setIsGoogleLoading(false);
-  };
+  } else if (!isAuthModalOpen && prevOpenState) {
+    setPrevOpenState(false);
+  }
 
-  // Resend countdown
+  // Resend countdown timer
   useEffect(() => {
     if (step !== 2 || resendTimer <= 0) return;
     const interval = setInterval(() => {
@@ -73,59 +70,53 @@ export const AuthModal: React.FC = () => {
     return () => clearInterval(interval);
   }, [step, resendTimer]);
 
-  if (!isAuthModalOpen) return null;
+  const handleClose = () => {
+    closeAuthModal();
+    setStep(1);
+    setOtpDigits(['', '', '', '', '', '']);
+    setIsLoading(false);
+    setIsGoogleLoading(false);
+  };
 
-  const handleSendOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanId = identifier.trim();
+  // 1. Submit Form & Dispatch Twilio Email OTP
+  const handleSendOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanEmail = email.trim().toLowerCase();
 
-    if (!cleanId) {
-      showToast(`Please enter your college ${identifierType}`, 'error');
-      return;
-    }
-
-    if (identifierType === 'email' && !cleanId.includes('@')) {
+    if (!cleanEmail || !cleanEmail.includes('@')) {
       showToast('Please enter a valid email address (e.g. name@campus.edu)', 'error');
       return;
     }
 
-    if (identifierType === 'phone' && cleanId.replace(/\D/g, '').length < 10) {
-      showToast('Please enter a valid 10-digit mobile number', 'error');
-      return;
-    }
-
-    if (authMode === 'signup' && !fullName.trim()) {
-      showToast('Please enter your full name', 'error');
-      return;
-    }
-
-    if (!usn.trim()) {
-      showToast(role === 'Student' ? 'Please enter your USN / Roll No' : 'Please enter your Faculty Employee ID', 'error');
-      return;
+    if (authMode === 'signup') {
+      if (!fullName.trim()) {
+        showToast('Please enter your full name', 'error');
+        return;
+      }
+      if (!dob) {
+        showToast('Please select your Date of Birth (DOB)', 'error');
+        return;
+      }
     }
 
     setIsLoading(true);
     try {
-      const res = await sendOtp(cleanId, identifierType === 'phone');
+      const res = await sendOtp(cleanEmail);
       setIsLoading(false);
 
       if (res.success) {
         setStep(2);
-        setReceivedOtpDisplay(res.displayOtpMessage);
         setResendTimer(30);
-
-        // Notify user with prompt's exact OTP format: Your otp is "#otpcode"
         showToast(
-          res.displayOtpMessage,
+          res.message || `Verification code sent to ${cleanEmail}. Check inbox & spam.`,
           'success',
-          `OTP Sent via ${identifierType === 'phone' ? 'SMS' : 'Email'}`
+          'Email Code Dispatched'
         );
-
         setTimeout(() => {
           otpInputsRef.current[0]?.focus();
         }, 150);
       } else {
-        showToast('Unable to send verification code. Please retry.', 'error');
+        showToast(res.message || 'Unable to send verification code. Please retry.', 'error');
       }
     } catch (err: any) {
       setIsLoading(false);
@@ -133,6 +124,7 @@ export const AuthModal: React.FC = () => {
     }
   };
 
+  // OTP Input Navigation
   const handleOtpChange = (index: number, val: string) => {
     const digit = val.replace(/\D/g, '').slice(-1);
     const newDigits = [...otpDigits];
@@ -150,14 +142,7 @@ export const AuthModal: React.FC = () => {
     }
   };
 
-  const handleAutoFillOtp = () => {
-    const code = generatedOtpCode || '489201';
-    const digits = code.split('').slice(0, 6);
-    while (digits.length < 6) digits.push('0');
-    setOtpDigits(digits);
-    showToast(`Auto-filled code: ${code}`, 'info');
-  };
-
+  // 2. Verify OTP & Process Workflow Requirements
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     const enteredCode = otpDigits.join('');
@@ -169,23 +154,39 @@ export const AuthModal: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const result = await verifyOtp(identifier, enteredCode, {
-        name: fullName || identifier.split('@')[0],
-        role,
-        usn: usn.trim(),
-        dob,
-        pickupZone,
-        phone: identifierType === 'phone' ? identifier : undefined,
-        email: identifierType === 'email' ? identifier : undefined,
-      });
+      const cleanEmail = email.trim().toLowerCase();
+      const result = await verifyOtp(
+        cleanEmail,
+        enteredCode,
+        {
+          name: fullName.trim() || cleanEmail.split('@')[0],
+          dob,
+          role,
+          pickupZone,
+        },
+        authMode
+      );
 
       setIsLoading(false);
 
       if (result.success) {
-        showToast(result.message, 'success', 'Login Successful');
-        handleClose();
+        if (result.requiresRedirectToLogin || authMode === 'signup') {
+          // Feature 1 Requirement: "save their Name, DOB, and Email to the database, and immediately redirect them to the Login page."
+          showToast(
+            'Registration successful! Name, DOB, and Email saved. Please log in with your email.',
+            'success',
+            'Redirecting to Login'
+          );
+          setAuthMode('login');
+          setStep(1);
+          setOtpDigits(['', '', '', '', '', '']);
+        } else {
+          // Feature 2: Returning user logged in
+          showToast(result.message, 'success', 'Login Successful');
+          handleClose();
+        }
       } else {
-        showToast(result.message, 'error', 'Verification Failed');
+        showToast(result.message || 'Invalid or expired OTP code', 'error', 'Verification Failed');
       }
     } catch (err: any) {
       setIsLoading(false);
@@ -193,6 +194,7 @@ export const AuthModal: React.FC = () => {
     }
   };
 
+  // 3. Feature 3: Continue with Google (via Supabase)
   const handleGoogleSignIn = async () => {
     setIsGoogleLoading(true);
     try {
@@ -206,6 +208,94 @@ export const AuthModal: React.FC = () => {
       setIsGoogleLoading(false);
     }
   };
+
+  // 4. Feature 3 Fallback UI: DOB Collection Workflow
+  const handleFallbackSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fallbackDob) {
+      showToast('Please enter your Date of Birth', 'error');
+      return;
+    }
+    setIsFallbackSubmitting(true);
+    try {
+      const res = await submitDobFallback(fallbackDob);
+      setIsFallbackSubmitting(false);
+      if (res.success) {
+        showToast(res.message, 'success', 'Profile Completed');
+      } else {
+        showToast(res.message, 'error');
+      }
+    } catch (err: any) {
+      setIsFallbackSubmitting(false);
+      showToast(err?.message || 'Failed to save DOB', 'error');
+    }
+  };
+
+  // FALLBACK UI MODAL: If DOB is not provided by Google default scopes
+  if (needsDobFallback && dobFallbackUser) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden border border-emerald-100">
+          <div className="bg-gradient-to-r from-emerald-800 to-green-700 p-6 text-white">
+            <button
+              onClick={closeDobFallback}
+              className="absolute top-5 right-5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <span className="bg-emerald-500/30 text-emerald-200 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-400/20">
+              Google OAuth Profile Completion
+            </span>
+            <h2 className="text-xl font-black mt-2">Date of Birth Required</h2>
+            <p className="text-xs text-emerald-100/90 mt-1">
+              Welcome, <strong>{dobFallbackUser.name}</strong>! Google does not share your Date of Birth by default. Please provide it to complete setup.
+            </p>
+          </div>
+
+          <form onSubmit={handleFallbackSubmit} className="p-6 space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1">
+                Your Date of Birth (DOB) *
+              </label>
+              <div className="relative">
+                <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="date"
+                  required
+                  value={fallbackDob}
+                  onChange={(e) => setFallbackDob(e.target.value)}
+                  className="w-full pl-10 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold focus:bg-white focus:border-emerald-600 focus:outline-none transition-colors"
+                />
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1.5">
+                Your exact Google name and email (<strong>{dobFallbackUser.email}</strong>) will be securely saved to the database.
+              </p>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isFallbackSubmitting}
+              className="w-full py-3 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              {isFallbackSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Saving Date of Birth...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Complete Setup & Continue</span>
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthModalOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -221,21 +311,23 @@ export const AuthModal: React.FC = () => {
 
           <div className="flex items-center gap-2 mb-2">
             <span className="bg-emerald-500/30 text-emerald-200 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-400/20">
-              Campus Canteen Auth • Clerk & Supabase
+              Campus Security Portal • Twilio & Supabase
             </span>
           </div>
 
           <h2 className="text-xl sm:text-2xl font-black tracking-tight">
             {step === 1
               ? authMode === 'login'
-                ? 'Welcome Back, Campus Scholar'
-                : 'Join Campus Canteen Delivery'
-              : 'Enter Verification OTP'}
+                ? 'Welcome Back, Sign In'
+                : 'Create New Account'
+              : 'Enter Verification Code'}
           </h2>
           <p className="text-xs text-emerald-100/90 mt-1">
             {step === 1
-              ? 'Student & Faculty Portal: Order breakfast & lunch with ₹0 delivery charges'
-              : `Enter the 6-digit code received via SMS/Email to verify your identity`}
+              ? authMode === 'login'
+                ? 'Enter your registered email to receive an email OTP, or Continue with Google'
+                : 'Fill in your Name, Date of Birth, and Email to register securely'
+              : `A 6-digit code has been delivered to ${email}. Check inbox & spam.`}
           </p>
         </div>
 
@@ -254,7 +346,7 @@ export const AuthModal: React.FC = () => {
                       : 'text-gray-500 hover:text-gray-800'
                   }`}
                 >
-                  Student / Teacher Log In
+                  User Login (Returning Users)
                 </button>
                 <button
                   type="button"
@@ -265,70 +357,16 @@ export const AuthModal: React.FC = () => {
                       : 'text-gray-500 hover:text-gray-800'
                   }`}
                 >
-                  New Registration
+                  User Signup (New Users)
                 </button>
               </div>
 
-              {/* Role Selection: Student vs Teacher */}
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                  Select Your College Role:
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRole('Student');
-                      if (usn.startsWith('FAC-')) setUsn('1RV21CS042');
-                    }}
-                    className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all ${
-                      role === 'Student'
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-500/20'
-                        : 'border-gray-200 hover:border-gray-300 text-gray-700'
-                    }`}
-                  >
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold ${
-                      role === 'Student' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      <GraduationCap className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-black">Student</div>
-                      <div className="text-[10px] text-gray-500">Using Personal USN</div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRole('Teacher');
-                      if (!usn.startsWith('FAC-')) setUsn('FAC-ENG-102');
-                    }}
-                    className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all ${
-                      role === 'Teacher'
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-500/20'
-                        : 'border-gray-200 hover:border-gray-300 text-gray-700'
-                    }`}
-                  >
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold ${
-                      role === 'Teacher' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      <Briefcase className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-black">Teacher / Faculty</div>
-                      <div className="text-[10px] text-gray-500">Using Faculty ID</div>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Continue with Google (Clerk / OAuth) */}
+              {/* Feature 3: Continue with Google Button on both Login and Signup pages */}
               <button
                 type="button"
                 onClick={handleGoogleSignIn}
                 disabled={isGoogleLoading}
-                className="w-full py-2.5 px-4 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold text-xs rounded-xl shadow-sm flex items-center justify-center gap-3 transition-colors"
+                className="w-full py-2.5 px-4 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold text-xs rounded-xl shadow-sm flex items-center justify-center gap-3 transition-colors cursor-pointer"
               >
                 {isGoogleLoading ? (
                   <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
@@ -358,18 +396,18 @@ export const AuthModal: React.FC = () => {
               <div className="flex items-center my-3">
                 <div className="flex-1 border-t border-gray-200"></div>
                 <span className="px-3 text-[11px] text-gray-400 font-semibold uppercase tracking-wider">
-                  Or Sign In with OTP
+                  Or Continue with Email
                 </span>
                 <div className="flex-1 border-t border-gray-200"></div>
               </div>
 
-              {/* Details Form */}
+              {/* Form Fields */}
               <form onSubmit={handleSendOtp} className="space-y-4">
-                {/* Full Name (Sign Up only) */}
+                {/* Feature 1: Name Field for New Users Signup */}
                 {authMode === 'signup' && (
                   <div>
                     <label className="block text-xs font-bold text-gray-700 mb-1">
-                      Full Name *
+                      Name *
                     </label>
                     <div className="relative">
                       <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -378,37 +416,18 @@ export const AuthModal: React.FC = () => {
                         required
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
-                        placeholder="e.g. Aditya Varma"
+                        placeholder="Enter your full name"
                         className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold focus:bg-white focus:border-emerald-600 focus:outline-none transition-colors"
                       />
                     </div>
                   </div>
                 )}
 
-                {/* Personal ID / USN */}
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center justify-between">
-                    <span>{role === 'Student' ? 'University Seat Number (USN) *' : 'Faculty Personal ID *'}</span>
-                    <span className="text-[10px] text-emerald-600 font-extrabold uppercase">Personal ID</span>
-                  </label>
-                  <div className="relative">
-                    <Hash className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input
-                      type="text"
-                      required
-                      value={usn}
-                      onChange={(e) => setUsn(e.target.value.toUpperCase())}
-                      placeholder={role === 'Student' ? 'e.g. 1RV21CS042' : 'e.g. FAC-ENG-102'}
-                      className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:bg-white focus:border-emerald-600 focus:outline-none uppercase tracking-wider transition-colors"
-                    />
-                  </div>
-                </div>
-
-                {/* DOB & Auth Identifier Toggle */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Feature 1: DOB (Date of Birth) Field for New Users Signup */}
+                {authMode === 'signup' && (
                   <div>
                     <label className="block text-xs font-bold text-gray-700 mb-1">
-                      Date of Birth (DOB) *
+                      DOB (Date of Birth) *
                     </label>
                     <div className="relative">
                       <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -421,70 +440,27 @@ export const AuthModal: React.FC = () => {
                       />
                     </div>
                   </div>
+                )}
 
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-bold text-gray-700">
-                        {identifierType === 'email' ? 'College Email *' : 'Mobile (SMS) *'}
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIdentifierType(identifierType === 'email' ? 'phone' : 'email');
-                          setIdentifier('');
-                        }}
-                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 underline"
-                      >
-                        Use {identifierType === 'email' ? 'Phone' : 'Email'}
-                      </button>
-                    </div>
-                    <div className="relative">
-                      {identifierType === 'email' ? (
-                        <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      ) : (
-                        <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      )}
-                      <input
-                        type={identifierType === 'email' ? 'email' : 'tel'}
-                        required
-                        value={identifier}
-                        onChange={(e) => setIdentifier(e.target.value)}
-                        placeholder={identifierType === 'email' ? 'name@campus.edu' : '9845012345'}
-                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold focus:bg-white focus:border-emerald-600 focus:outline-none transition-colors"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Pickup Zone (Ground Floor to 9th Floor in A/B wing) */}
+                {/* Email ID Field (Required on both Signup & Login) */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center justify-between">
-                    <span>Default Pickup Zone (Ground to 9th Floor, Wings A & B) *</span>
-                    <span className="text-[10px] text-gray-500">Free Delivery</span>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Email ID *
                   </label>
                   <div className="relative">
-                    <Building className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                    <select
-                      value={pickupZone}
-                      onChange={(e) => setPickupZone(e.target.value)}
-                      className="w-full pl-10 pr-8 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold focus:bg-white focus:border-emerald-600 focus:outline-none transition-colors appearance-none cursor-pointer"
-                    >
-                      {CAMPUS_PICKUP_ZONES.map((zone) => (
-                        <option key={zone} value={zone}>
-                          {zone}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 text-xs">
-                      ▼
-                    </div>
+                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="user@example.com"
+                      className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold focus:bg-white focus:border-emerald-600 focus:outline-none transition-colors"
+                    />
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-1">
-                    Canteen runners deliver hot sealed meals directly to this floor pickup point.
-                  </p>
                 </div>
 
-                {/* Submit button */}
+                {/* Submit button: triggers Twilio API email OTP */}
                 <button
                   type="submit"
                   disabled={isLoading}
@@ -493,11 +469,11 @@ export const AuthModal: React.FC = () => {
                   {isLoading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Sending Verification OTP...</span>
+                      <span>Sending Email Code...</span>
                     </>
                   ) : (
                     <>
-                      <span>Get Verification Code</span>
+                      <span>{authMode === 'signup' ? 'Register & Send Code' : 'Send Login Code'}</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
@@ -505,36 +481,24 @@ export const AuthModal: React.FC = () => {
               </form>
             </>
           ) : (
-            /* STEP 2: OTP VERIFICATION */
+            /* STEP 2: STRICTLY CONTROLLED OTP VERIFICATION MODAL */
             <form onSubmit={handleVerifyOtp} className="space-y-5">
-              {/* Prompt's specified OTP Simulation Banner */}
-              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 text-emerald-950 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs font-black text-emerald-800">
-                    <MessageSquare className="w-4 h-4 text-emerald-600" />
-                    <span>Received in {identifierType === 'phone' ? 'SMS' : 'Email'}:</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAutoFillOtp}
-                    className="text-[11px] font-black text-emerald-700 hover:text-emerald-900 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
-                  >
-                    <Sparkles className="w-3 h-3 text-amber-500" />
-                    <span>Auto-Fill Code</span>
-                  </button>
+              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 text-emerald-950 text-center space-y-1">
+                <div className="text-xs font-black text-emerald-900">
+                  Verification Code Sent
                 </div>
-                <div className="p-2.5 bg-white rounded-xl border border-emerald-100 font-mono font-bold text-xs text-gray-800 tracking-wide text-center">
-                  {receivedOtpDisplay || `Your otp is "${generatedOtpCode || '489201'}"`}
-                </div>
-                <p className="text-[11px] text-gray-500 text-center">
-                  Sent to <strong className="text-gray-800">{identifier}</strong> ({role}: {usn})
+                <p className="text-xs text-gray-600">
+                  Please enter the 6-digit code delivered to <strong className="text-gray-900">{email}</strong>.
+                </p>
+                <p className="text-[11px] text-gray-500">
+                  Strict Security: The OTP is delivered directly to your email inbox and spam folder.
                 </p>
               </div>
 
               {/* 6 Digit Inputs */}
               <div>
                 <label className="block text-center text-xs font-bold text-gray-700 mb-3">
-                  Enter 6-Digit Verification Code
+                  Enter 6-Digit Code
                 </label>
                 <div className="flex justify-center gap-2 sm:gap-3">
                   {otpDigits.map((digit, index) => (
@@ -553,7 +517,7 @@ export const AuthModal: React.FC = () => {
                 </div>
               </div>
 
-              {/* Resend OTP */}
+              {/* Resend Countdown */}
               <div className="text-center">
                 {resendTimer > 0 ? (
                   <p className="text-xs text-gray-400">
@@ -562,11 +526,11 @@ export const AuthModal: React.FC = () => {
                 ) : (
                   <button
                     type="button"
-                    onClick={(e) => handleSendOtp(e)}
-                    className="text-xs font-bold text-emerald-600 hover:text-emerald-800 transition-colors inline-flex items-center gap-1"
+                    onClick={() => handleSendOtp()}
+                    className="text-xs font-bold text-emerald-600 hover:text-emerald-800 transition-colors inline-flex items-center gap-1 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
-                    Resend Verification Code
+                    Resend Code
                   </button>
                 )}
               </div>
@@ -581,12 +545,12 @@ export const AuthModal: React.FC = () => {
                   {isLoading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Verifying...</span>
+                      <span>Verifying Code...</span>
                     </>
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>Verify & Continue Ordering</span>
+                      <span>{authMode === 'signup' ? 'Verify & Complete Registration' : 'Verify & Log In'}</span>
                     </>
                   )}
                 </button>
@@ -594,7 +558,7 @@ export const AuthModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setStep(1)}
-                  className="w-full py-2 text-xs font-bold text-gray-500 hover:text-gray-800 transition-colors"
+                  className="w-full py-2 text-xs font-bold text-gray-500 hover:text-gray-800 transition-colors cursor-pointer"
                 >
                   ← Back to Details
                 </button>
@@ -607,9 +571,9 @@ export const AuthModal: React.FC = () => {
         <div className="bg-gray-50 p-4 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500 flex-shrink-0">
           <div className="flex items-center gap-1.5 text-emerald-700 font-bold">
             <ShieldCheck className="w-4 h-4" />
-            <span>Campus Verified Auth</span>
+            <span>High-Security Twilio & Supabase Auth</span>
           </div>
-          <div>Clerk • Razorpay • Pure Veg Guarantee</div>
+          <div>Verified Portal</div>
         </div>
       </div>
     </div>

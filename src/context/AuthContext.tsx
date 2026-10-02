@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabaseClient';
 import { storage } from '../lib/storage';
@@ -12,23 +12,26 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   isAuthModalOpen: boolean;
-  openAuthModal: () => void;
+  authModalMode: 'login' | 'signup';
+  openAuthModal: (mode?: 'login' | 'signup' | unknown) => void;
   closeAuthModal: () => void;
-  generatedOtpCode: string | null;
-  sendOtp: (identifier: string, isPhone?: boolean) => Promise<{
+  sendOtp: (email: string) => Promise<{
     success: boolean;
-    otpCode: string;
     message: string;
-    displayOtpMessage: string;
   }>;
   verifyOtp: (
-    identifier: string,
+    email: string,
     code: string,
-    profileData?: Partial<UserProfile>
-  ) => Promise<{ success: boolean; message: string }>;
+    profileData?: Partial<UserProfile>,
+    mode?: 'signup' | 'login'
+  ) => Promise<{ success: boolean; message: string; requiresRedirectToLogin?: boolean }>;
   signInWithGoogle: () => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   updateProfile: (profileData: Partial<UserProfile>) => Promise<{ success: boolean; message: string }>;
+  needsDobFallback: boolean;
+  dobFallbackUser: { id: string; email: string; name: string } | null;
+  submitDobFallback: (dob: string) => Promise<{ success: boolean; message: string }>;
+  closeDobFallback: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,37 +41,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [generatedOtpCode, setGeneratedOtpCode] = useState<string | null>('489201');
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'signup'>('login');
+
+  // Token map for stateless OTP verification without frontend code leakage
+  const otpTokensRef = useRef<Record<string, string>>({});
+
+  // Fallback UI State for Google OAuth DOB
+  const [needsDobFallback, setNeedsDobFallback] = useState<boolean>(false);
+  const [dobFallbackUser, setDobFallbackUser] = useState<{ id: string; email: string; name: string } | null>(null);
 
   const syncSupabaseUser = useCallback(async (currentSession: Session) => {
     try {
       const authUser = currentSession.user;
       const meta = authUser.user_metadata || {};
-      const userEmail = authUser.email || '';
+      const userEmail = (authUser.email || '').trim().toLowerCase();
 
+      // Ensure exact name from Google is captured
+      const googleName =
+        meta.full_name ||
+        meta.name ||
+        userEmail.split('@')[0] ||
+        'Campus Scholar';
+
+      // Check profiles table in Supabase
       const { data: dbProfile } = await supabase
         .from('profiles')
         .select('*')
         .eq('email', userEmail)
         .maybeSingle();
 
-      const resolvedName =
-        dbProfile?.name ||
-        meta.full_name ||
-        meta.name ||
-        userEmail.split('@')[0] ||
-        'Campus Scholar';
+      const existingDob = dbProfile?.dob || meta.birthday || meta.dob || '';
+
+      // Feature 3: Fallback UI if DOB is not provided by Google default scopes
+      if (!existingDob) {
+        setDobFallbackUser({
+          id: authUser.id,
+          email: userEmail,
+          name: dbProfile?.name || googleName,
+        });
+        setNeedsDobFallback(true);
+      }
 
       const mergedProfile: UserProfile = {
         id: authUser.id,
-        name: resolvedName,
+        name: dbProfile?.name || googleName,
         email: userEmail,
         phone: dbProfile?.phone || meta.phone || '',
         role: (dbProfile?.role as 'Student' | 'Teacher') || 'Student',
-        dob: dbProfile?.dob || '2003-01-01',
+        dob: existingDob,
         usn: dbProfile?.usn || '1RV21CS042',
         pickupZone: dbProfile?.pickup_zone || CAMPUS_PICKUP_ZONES[0],
+        created_at: dbProfile?.created_at || new Date().toISOString(),
       };
+
+      // Ensure Google user's name is saved in database exactly as provided by Google
+      try {
+        await supabase.from('profiles').upsert({
+          id: authUser.id,
+          email: userEmail,
+          name: dbProfile?.name || googleName,
+          dob: existingDob,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'email' });
+      } catch (upsertErr) {
+        console.warn('Profile sync upsert notice:', upsertErr);
+      }
 
       setUser(mergedProfile);
       storage.set(STORAGE_KEY, mergedProfile);
@@ -109,107 +146,154 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [syncSupabaseUser]);
 
-  const openAuthModal = () => setIsAuthModalOpen(true);
+  const openAuthModal = (mode?: 'login' | 'signup' | unknown) => {
+    const resolvedMode = mode === 'signup' ? 'signup' : 'login';
+    setAuthModalMode(resolvedMode);
+    setIsAuthModalOpen(true);
+  };
+
   const closeAuthModal = () => setIsAuthModalOpen(false);
 
-  // Send OTP to Email or Phone
-  const sendOtp = async (identifier: string, isPhone: boolean = false) => {
-    const cleanId = identifier.trim();
-    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
-    setGeneratedOtpCode(otpCode);
-
-    const displayOtpMessage = `Your otp is "${otpCode}"`;
-
+  // Send OTP to Email via Twilio API
+  const sendOtp = async (email: string) => {
+    const cleanEmail = email.trim().toLowerCase();
     try {
-      if (!isPhone && cleanId.includes('@')) {
-        fetch('/api/send-otp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: cleanId }),
-        })
-          .then((res) => res.json())
-          .catch(() => {});
-      }
-    } catch (err) {
-      console.warn('OTP dispatch background notice:', err);
-    }
+      const res = await fetch('/api/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
 
-    return {
-      success: true,
-      otpCode,
-      message: `OTP sent successfully to ${cleanId}!`,
-      displayOtpMessage,
-    };
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          message: data.message || 'Unable to send verification email. Please try again.',
+        };
+      }
+
+      // Store stateless verification token without exposing OTP code
+      if (data.otpToken) {
+        otpTokensRef.current[cleanEmail] = data.otpToken;
+      }
+
+      return {
+        success: true,
+        message: data.message || `Verification code sent to ${cleanEmail}. Please check your email inbox and Spam folder.`,
+      };
+    } catch (err: any) {
+      console.error('[sendOtp Exception]:', err);
+      return {
+        success: false,
+        message: err.message || 'Network error sending verification code',
+      };
+    }
   };
 
   // Verify OTP
   const verifyOtp = async (
-    identifier: string,
+    email: string,
     code: string,
-    profileData?: Partial<UserProfile>
+    profileData?: Partial<UserProfile>,
+    mode: 'signup' | 'login' = 'login'
   ) => {
-    const cleanId = identifier.trim();
+    const cleanEmail = email.trim().toLowerCase();
     const cleanCode = code.trim().replace(/^#/, '');
+    const otpToken = otpTokensRef.current[cleanEmail] || '';
 
-    const isCodeValid =
-      cleanCode === generatedOtpCode ||
-      ['123456', '849201', '012345'].includes(cleanCode);
+    try {
+      const res = await fetch('/api/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          code: cleanCode,
+          otpToken,
+        }),
+      });
 
-    if (!isCodeValid) {
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          message: data.message || 'Invalid or expired verification code.',
+        };
+      }
+
+      // FEATURE 1: User Signup Flow (New Users)
+      // Save Name, DOB, and Email to the database, and immediately redirect to Login page
+      if (mode === 'signup') {
+        const newProfileId = 'usr-' + Math.floor(100000 + Math.random() * 900000);
+        const resolvedName = profileData?.name?.trim() || cleanEmail.split('@')[0];
+        const resolvedDob = profileData?.dob?.trim() || '';
+
+        try {
+          await supabase.from('profiles').upsert({
+            id: newProfileId,
+            email: cleanEmail,
+            name: resolvedName,
+            dob: resolvedDob,
+            phone: profileData?.phone?.trim() || '',
+            role: profileData?.role || 'Student',
+            usn: profileData?.usn?.trim() || '1RV21CS042',
+            pickup_zone: profileData?.pickupZone || CAMPUS_PICKUP_ZONES[0],
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'email' });
+        } catch (dbErr) {
+          console.warn('Signup database save notice:', dbErr);
+        }
+
+        return {
+          success: true,
+          message: 'Registration successful! Name, DOB, and Email saved to database. Please log in with your email.',
+          requiresRedirectToLogin: true,
+        };
+      }
+
+      // FEATURE 2: User Login Flow (Returning Users)
+      // Fetch user profile from database and authenticate
+      const { data: dbProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('email', cleanEmail)
+        .maybeSingle();
+
+      const resolvedName = dbProfile?.name || cleanEmail.split('@')[0];
+      const loggedProfile: UserProfile = {
+        id: dbProfile?.id || 'usr-' + Math.floor(100000 + Math.random() * 900000),
+        name: resolvedName,
+        email: cleanEmail,
+        phone: dbProfile?.phone || '',
+        role: (dbProfile?.role as 'Student' | 'Teacher') || 'Student',
+        dob: dbProfile?.dob || '',
+        usn: dbProfile?.usn || '1RV21CS042',
+        pickupZone: dbProfile?.pickup_zone || CAMPUS_PICKUP_ZONES[0],
+        created_at: dbProfile?.created_at || new Date().toISOString(),
+      };
+
+      setUser(loggedProfile);
+      storage.set(STORAGE_KEY, loggedProfile);
+
+      return {
+        success: true,
+        message: `Welcome back, ${resolvedName}! Logged in successfully.`,
+      };
+    } catch (err: any) {
+      console.error('[verifyOtp Exception]:', err);
       return {
         success: false,
-        message: 'Invalid OTP code. Please enter the 6-digit code received.',
+        message: err.message || 'Network error verifying code',
       };
     }
-
-    const isEmail = cleanId.includes('@');
-    const resolvedName = profileData?.name?.trim() || cleanId.split('@')[0] || 'Campus User';
-    const role = profileData?.role || 'Student';
-    const usn = profileData?.usn?.trim() || (role === 'Student' ? '1RV21CS042' : 'FAC-102');
-    const pickupZone = profileData?.pickupZone || CAMPUS_PICKUP_ZONES[0];
-
-    const newProfile: UserProfile = {
-      id: 'usr-' + Math.floor(10000 + Math.random() * 90000),
-      name: resolvedName,
-      email: isEmail ? cleanId : `${cleanId.replace(/\D/g, '')}@campus.edu`,
-      phone: !isEmail ? cleanId : profileData?.phone?.trim() || '',
-      role,
-      dob: profileData?.dob || '2003-01-01',
-      usn,
-      pickupZone,
-      created_at: new Date().toISOString(),
-    };
-
-    setUser(newProfile);
-    storage.set(STORAGE_KEY, newProfile);
-
-    // Upsert to Supabase
-    try {
-      await supabase.from('profiles').upsert({
-        id: newProfile.id,
-        email: newProfile.email,
-        name: newProfile.name,
-        phone: newProfile.phone || '',
-        dob: newProfile.dob || '',
-        usn: newProfile.usn,
-        pickup_zone: newProfile.pickupZone,
-        updated_at: new Date().toISOString(),
-      });
-    } catch {
-      // Offline fallback
-    }
-
-    return {
-      success: true,
-      message: `Welcome, ${resolvedName}! Logged in as ${role} (${usn}).`,
-    };
   };
 
+  // Feature 3: Continue with Google with scopes configured for Name and DOB
   const signInWithGoogle = async () => {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
+          scopes: 'openid email profile https://www.googleapis.com/auth/user.birthday.read',
           redirectTo: window.location.origin,
         },
       });
@@ -218,6 +302,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       return { success: false, message: err.message || 'Google Sign-in failed' };
     }
+  };
+
+  // Feature 3 Fallback UI submission for Google OAuth DOB
+  const submitDobFallback = async (dob: string) => {
+    if (!dobFallbackUser) {
+      return { success: false, message: 'No Google user pending DOB verification' };
+    }
+
+    const cleanDob = dob.trim();
+    if (!cleanDob) {
+      return { success: false, message: 'Please select a valid Date of Birth' };
+    }
+
+    try {
+      await supabase.from('profiles').upsert({
+        id: dobFallbackUser.id,
+        email: dobFallbackUser.email,
+        name: dobFallbackUser.name,
+        dob: cleanDob,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'email' });
+
+      if (user) {
+        const updatedUser = { ...user, dob: cleanDob };
+        setUser(updatedUser);
+        storage.set(STORAGE_KEY, updatedUser);
+      }
+
+      setNeedsDobFallback(false);
+      setDobFallbackUser(null);
+
+      return {
+        success: true,
+        message: 'Date of Birth saved successfully! Profile setup complete.',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.message || 'Failed to save Date of Birth',
+      };
+    }
+  };
+
+  const closeDobFallback = () => {
+    setNeedsDobFallback(false);
   };
 
   const logout = async () => {
@@ -235,6 +364,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updated = { ...user, ...profileData };
     setUser(updated);
     storage.set(STORAGE_KEY, updated);
+
+    try {
+      await supabase.from('profiles').upsert({
+        id: user.id,
+        email: user.email,
+        name: updated.name,
+        dob: updated.dob,
+        phone: updated.phone,
+        role: updated.role,
+        usn: updated.usn,
+        pickup_zone: updated.pickupZone,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'email' });
+    } catch (err) {
+      console.warn('Update profile Supabase sync notice:', err);
+    }
+
     return { success: true, message: 'Profile updated successfully!' };
   };
 
@@ -245,14 +391,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         session,
         loading,
         isAuthModalOpen,
+        authModalMode,
         openAuthModal,
         closeAuthModal,
-        generatedOtpCode,
         sendOtp,
         verifyOtp,
         signInWithGoogle,
         logout,
         updateProfile,
+        needsDobFallback,
+        dobFallbackUser,
+        submitDobFallback,
+        closeDobFallback,
       }}
     >
       {children}
@@ -267,3 +417,4 @@ export const useAuth = () => {
   }
   return context;
 };
+
