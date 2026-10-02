@@ -64,9 +64,15 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ]);
   const [selectedAddress, setSelectedAddress] = useState<Address>(DEFAULT_CAMPUS_ADDRESS);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
-  const [pastOrders, setPastOrders] = useState<Order[]>(() =>
-    storage.get('satvik_dashboard_orders', storage.get('satvik_past_orders', INITIAL_ORDERS))
-  );
+  const [pastOrders, setPastOrders] = useState<Order[]>(() => {
+    const saved = storage.get<Order[]>('satvik_dashboard_orders', storage.get<Order[]>('satvik_past_orders', INITIAL_ORDERS));
+    const cleaned = saved.filter((o) => !['ORD-782101', 'ORD-782102', 'ORD-782103'].includes(o.id));
+    if (cleaned.length !== saved.length) {
+      storage.set('satvik_past_orders', cleaned);
+      storage.set('satvik_dashboard_orders', cleaned);
+    }
+    return cleaned;
+  });
 
   useEffect(() => {
     storage.set('satvik_cart_items', items);
@@ -80,13 +86,12 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const handleOrdersUpdated = () => {
       const saved = storage.get<Order[]>('satvik_dashboard_orders', storage.get<Order[]>('satvik_past_orders', []));
-      if (saved.length > 0) {
-        setPastOrders(saved);
-        setActiveOrder((prev) => {
-          if (!prev) return saved[0] || null;
-          return saved.find((o) => o.id === prev.id) || prev;
-        });
-      }
+      const cleaned = saved.filter((o) => !['ORD-782101', 'ORD-782102', 'ORD-782103'].includes(o.id));
+      setPastOrders(cleaned);
+      setActiveOrder((prev) => {
+        if (!prev) return cleaned[0] || null;
+        return cleaned.find((o) => o.id === prev.id) || null;
+      });
     };
 
     window.addEventListener('satvik_orders_updated', handleOrdersUpdated);

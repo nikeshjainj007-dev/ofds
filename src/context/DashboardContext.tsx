@@ -129,9 +129,15 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // 2. Orders State
-  const [orders, setOrders] = useState<Order[]>(() =>
-    storage.get('satvik_dashboard_orders', INITIAL_ORDERS)
-  );
+  const [orders, setOrders] = useState<Order[]>(() => {
+    const saved = storage.get<Order[]>('satvik_dashboard_orders', INITIAL_ORDERS);
+    const cleaned = saved.filter((o) => !['ORD-782101', 'ORD-782102', 'ORD-782103'].includes(o.id));
+    if (cleaned.length !== saved.length) {
+      storage.set('satvik_dashboard_orders', cleaned);
+      storage.set('satvik_past_orders', cleaned);
+    }
+    return cleaned;
+  });
 
   useEffect(() => {
     storage.set('satvik_dashboard_orders', orders);
@@ -142,9 +148,8 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     const handleSyncOrders = () => {
       const saved = storage.get<Order[]>('satvik_dashboard_orders', []);
-      if (saved.length > 0) {
-        setOrders(saved);
-      }
+      const cleaned = saved.filter((o) => !['ORD-782101', 'ORD-782102', 'ORD-782103'].includes(o.id));
+      setOrders(cleaned);
     };
     window.addEventListener('satvik_orders_updated', handleSyncOrders);
     return () => window.removeEventListener('satvik_orders_updated', handleSyncOrders);
@@ -169,18 +174,28 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [canteenStaff]);
 
   // 5. Payments State
-  const [payments, setPayments] = useState<PaymentRecord[]>(() =>
-    storage.get('satvik_dashboard_payments', INITIAL_PAYMENTS)
-  );
+  const [payments, setPayments] = useState<PaymentRecord[]>(() => {
+    const saved = storage.get<PaymentRecord[]>('satvik_dashboard_payments', INITIAL_PAYMENTS);
+    const cleaned = saved.filter((p) => !['pay_rec_001', 'pay_rec_002', 'pay_rec_003'].includes(p.id));
+    if (cleaned.length !== saved.length) {
+      storage.set('satvik_dashboard_payments', cleaned);
+    }
+    return cleaned;
+  });
 
   useEffect(() => {
     storage.set('satvik_dashboard_payments', payments);
   }, [payments]);
 
   // 6. Complaints State
-  const [complaints, setComplaints] = useState<Complaint[]>(() =>
-    storage.get('satvik_dashboard_complaints', INITIAL_COMPLAINTS)
-  );
+  const [complaints, setComplaints] = useState<Complaint[]>(() => {
+    const saved = storage.get<Complaint[]>('satvik_dashboard_complaints', INITIAL_COMPLAINTS);
+    const cleaned = saved.filter((c) => !['CMP-101'].includes(c.id));
+    if (cleaned.length !== saved.length) {
+      storage.set('satvik_dashboard_complaints', cleaned);
+    }
+    return cleaned;
+  });
 
   useEffect(() => {
     storage.set('satvik_dashboard_complaints', complaints);
@@ -212,11 +227,14 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // 7. Feedback State
   const [feedbacks, setFeedbacks] = useState<Feedback[]>(() => {
-    const initialFbs: Feedback[] = [];
-    INITIAL_ORDERS.forEach((o) => {
-      if (o.feedback) initialFbs.push(o.feedback);
-    });
-    return storage.get('satvik_dashboard_feedbacks', initialFbs);
+    const saved = storage.get<Feedback[]>('satvik_dashboard_feedbacks', []);
+    const cleaned = saved.filter(
+      (f) => f.id !== 'fb-001' && !['ORD-782101', 'ORD-782102', 'ORD-782103'].includes(f.orderId)
+    );
+    if (cleaned.length !== saved.length) {
+      storage.set('satvik_dashboard_feedbacks', cleaned);
+    }
+    return cleaned;
   });
 
   useEffect(() => {
@@ -481,11 +499,7 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setComplaints(INITIAL_COMPLAINTS);
     setCanteenSettings(INITIAL_CANTEEN_SETTINGS);
 
-    const fbs: Feedback[] = [];
-    INITIAL_ORDERS.forEach((o) => {
-      if (o.feedback) fbs.push(o.feedback);
-    });
-    setFeedbacks(fbs);
+    setFeedbacks([]);
   };
 
   return (

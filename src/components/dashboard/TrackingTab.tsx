@@ -80,7 +80,22 @@ export const TrackingTab: React.FC = () => {
     );
   }
 
-  const assignedRider = riders.find(r => r.name === targetOrder.riderName || r.id === targetOrder.riderId) || riders[0];
+  const assignedRider = riders.find(r => r.name === targetOrder.riderName || r.id === targetOrder.riderId) || riders[0] || {
+    id: 'runner-0',
+    name: targetOrder.riderName || 'Campus Runner',
+    phone: targetOrder.riderPhone || '+91 98450 12345',
+    email: 'runner@campus.edu',
+    status: 'available' as const,
+    vehicleType: 'Campus Runner',
+    vehicleNumber: 'CAMPUS-RUNNER-01',
+    rating: 5.0,
+    totalDeliveries: 0,
+    assignedWing: 'Campus Wide',
+    assignedFloors: 'All Floors',
+    isPureVegInsulatedBagVerified: true,
+    emergencyContact: 'Canteen Helpdesk',
+    batteryLevel: 90
+  };
   const remainingKm = Math.max(0.1, (2.8 * (1 - routeProgress / 100))).toFixed(1);
   const calculatedEtaMins = Math.max(1, Math.round(targetOrder.estimatedMinutes * (1 - routeProgress / 100)));
 

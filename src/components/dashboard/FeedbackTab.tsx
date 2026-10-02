@@ -116,56 +116,66 @@ export const FeedbackTab: React.FC = () => {
       </div>
 
       {/* Feedbacks Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filteredFeedbacks.map((fb) => (
-          <div
-            key={fb.id}
-            className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-black text-xs">
-                  {fb.customerName.charAt(0)}
+      {filteredFeedbacks.length === 0 ? (
+        <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 shadow-sm">
+          <Star className="w-10 h-10 text-amber-400 mx-auto mb-2 opacity-50" />
+          <h3 className="font-bold text-gray-900 text-sm">No reviews yet</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Student and faculty ratings will appear here once meals are delivered.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredFeedbacks.map((fb) => (
+            <div
+              key={fb.id}
+              className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-black text-xs">
+                    {fb.customerName.charAt(0)}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-xs text-gray-900">{fb.customerName}</h4>
+                    <p className="text-[10px] text-gray-400">
+                      {fb.customerRole || 'Student'} • {fb.customerUsn || '1RV21CS042'}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-bold text-xs text-gray-900">{fb.customerName}</h4>
-                  <p className="text-[10px] text-gray-400">
-                    {fb.customerRole || 'Student'} • {fb.customerUsn || '1RV21CS042'}
-                  </p>
+
+                <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">
+                  <span className="font-black text-xs text-amber-900">{fb.overallRating}.0</span>
+                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                 </div>
               </div>
 
-              <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">
-                <span className="font-black text-xs text-amber-900">{fb.overallRating}.0</span>
-                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+              <p className="text-xs text-gray-600 leading-relaxed italic">
+                "{fb.comment}"
+              </p>
+
+              {/* Tags */}
+              {fb.tags && fb.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {fb.tags.map((t) => (
+                    <span
+                      key={t}
+                      className="text-[10px] font-bold bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-md"
+                    >
+                      ✓ {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-[10px] text-gray-400">
+                <span>Order: #{fb.orderId}</span>
+                <span>{new Date(fb.createdAt).toLocaleDateString()}</span>
               </div>
             </div>
-
-            <p className="text-xs text-gray-600 leading-relaxed italic">
-              "{fb.comment}"
-            </p>
-
-            {/* Tags */}
-            {fb.tags && fb.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {fb.tags.map((t) => (
-                  <span
-                    key={t}
-                    className="text-[10px] font-bold bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-md"
-                  >
-                    ✓ {t}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-[10px] text-gray-400">
-              <span>Order: #{fb.orderId}</span>
-              <span>{new Date(fb.createdAt).toLocaleDateString()}</span>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
