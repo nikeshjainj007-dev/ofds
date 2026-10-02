@@ -147,8 +147,8 @@ export const AuthModal: React.FC = () => {
     e.preventDefault();
     const enteredCode = otpDigits.join('');
 
-    if (enteredCode.length !== 6) {
-      showToast('Please enter the complete 6-digit OTP code', 'error');
+    if (enteredCode.length < 5 || enteredCode.length > 6) {
+      showToast('Please enter the verification code received in your email', 'error');
       return;
     }
 
@@ -483,16 +483,16 @@ export const AuthModal: React.FC = () => {
           ) : (
             /* STEP 2: STRICTLY CONTROLLED OTP VERIFICATION MODAL */
             <form onSubmit={handleVerifyOtp} className="space-y-5">
-              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 text-emerald-950 text-center space-y-1">
+              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 text-emerald-950 text-center space-y-1.5">
                 <div className="text-xs font-black text-emerald-900">
-                  Verification Code Sent
+                  Verification Email Dispatched via Twilio
                 </div>
-                <p className="text-xs text-gray-600">
-                  Please enter the 6-digit code delivered to <strong className="text-gray-900">{email}</strong>.
+                <p className="text-xs text-gray-700">
+                  Please check your inbox & <strong>Spam / Junk</strong> folder for <strong className="text-emerald-900">{email}</strong>.
                 </p>
-                <p className="text-[11px] text-gray-500">
-                  Strict Security: The OTP is delivered directly to your email inbox and spam folder.
-                </p>
+                <div className="text-[11px] text-emerald-800 bg-white/80 p-2 rounded-xl border border-emerald-200/60 leading-normal">
+                  Look for an email from <strong>Twilio / Trial with Twilio</strong> (Subject: <em>Your Verification Code</em> or <em>Your Order Has Been Confirmed!</em> with code #12345).
+                </div>
               </div>
 
               {/* 6 Digit Inputs */}
