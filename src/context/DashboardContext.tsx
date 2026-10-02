@@ -14,10 +14,11 @@ import {
   INITIAL_RIDERS, 
   INITIAL_STAFF, 
   INITIAL_PAYMENTS, 
-  INITIAL_CANTEEN_SETTINGS,
+  INITIAL_CANTEEN_SETTINGS, 
   INITIAL_COMPLAINTS 
 } from '../data/dashboardMockData';
 import { DISHES as DEFAULT_DISHES } from '../data/mockData';
+import { storage } from '../lib/storage';
 
 export type DashboardTab = 
   | 'overview' 
@@ -32,7 +33,6 @@ export type DashboardTab =
   | 'settings';
 
 interface DashboardContextType {
-  // Navigation & Modal
   isDashboardOpen: boolean;
   setIsDashboardOpen: (open: boolean) => void;
   activeTab: DashboardTab;
@@ -40,28 +40,24 @@ interface DashboardContextType {
   activeTrackingOrderId: string | null;
   setActiveTrackingOrderId: (id: string | null) => void;
 
-  // Dishes / Food Menu Management (Phase 6)
   dishes: Dish[];
   addDish: (dish: Omit<Dish, 'id'>) => Dish;
   updateDish: (id: string, updates: Partial<Dish>) => void;
   deleteDish: (id: string) => void;
   toggleDishAvailability: (id: string) => void;
 
-  // Orders (Phase 5)
   orders: Order[];
   updateOrderStatus: (orderId: string, status: Order['status']) => void;
   assignRiderToOrder: (orderId: string, riderId: string) => void;
   cancelOrder: (orderId: string, reason: string) => void;
   addManualOrder: (order: Partial<Order>) => Order;
 
-  // Delivery Riders
   riders: DeliveryRider[];
   addRider: (rider: Omit<DeliveryRider, 'id'>) => void;
   updateRider: (id: string, updates: Partial<DeliveryRider>) => void;
   deleteRider: (id: string) => void;
   toggleRiderStatus: (id: string) => void;
 
-  // Canteen Staff
   canteenStaff: CanteenStaff[];
   addStaff: (staff: Omit<CanteenStaff, 'id'>) => void;
   updateStaff: (id: string, updates: Partial<CanteenStaff>) => void;
@@ -69,25 +65,20 @@ interface DashboardContextType {
   toggleStaffDuty: (id: string) => void;
   toggleStaffTempCheck: (id: string) => void;
 
-  // Payments (Razorpay Only)
   payments: PaymentRecord[];
   refundPayment: (paymentId: string) => void;
   verifyPayment: (paymentId: string) => void;
 
-  // Complaints (Phase 8)
   complaints: Complaint[];
   addComplaint: (complaint: Omit<Complaint, 'id' | 'createdAt' | 'status'>) => Complaint;
   updateComplaintStatus: (id: string, status: Complaint['status'], resolutionNote?: string) => void;
 
-  // Feedback (Phase 9)
   feedbacks: Feedback[];
   addFeedback: (feedback: Omit<Feedback, 'id' | 'createdAt'>) => Feedback;
 
-  // Canteen Settings
   canteenSettings: CanteenSettings;
   updateCanteenSettings: (updates: Partial<CanteenSettings>) => void;
 
-  // Sync bridge with customer storefront
   syncExternalOrder: (order: Order) => void;
   resetToCleanState: () => void;
 }
@@ -99,18 +90,13 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
   const [activeTrackingOrderId, setActiveTrackingOrderId] = useState<string | null>('ORD-782101');
 
-  // 1. Dishes State (Phase 6: Update price, Add food, Photo of food)
-  const [dishes, setDishes] = useState<Dish[]>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_canteen_dishes');
-      return saved ? JSON.parse(saved) : DEFAULT_DISHES;
-    } catch {
-      return DEFAULT_DISHES;
-    }
-  });
+  // 1. Dishes State
+  const [dishes, setDishes] = useState<Dish[]>(() =>
+    storage.get('satvik_canteen_dishes', DEFAULT_DISHES)
+  );
 
   useEffect(() => {
-    localStorage.setItem('satvik_canteen_dishes', JSON.stringify(dishes));
+    storage.set('satvik_canteen_dishes', dishes);
     window.dispatchEvent(new CustomEvent('satvik_dishes_updated', { detail: dishes }));
   }, [dishes]);
 
@@ -138,79 +124,66 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const toggleDishAvailability = (id: string) => {
     setDishes((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, isAvailable: d.isAvailable === false ? true : false } : d))
+      prev.map((d) => (d.id === id ? { ...d, isAvailable: !d.isAvailable } : d))
     );
   };
 
   // 2. Orders State
-  const [orders, setOrders] = useState<Order[]>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_dashboard_orders');
-      if (saved) return JSON.parse(saved);
-      return INITIAL_ORDERS;
-    } catch {
-      return INITIAL_ORDERS;
-    }
-  });
+  const [orders, setOrders] = useState<Order[]>(() =>
+    storage.get('satvik_dashboard_orders', INITIAL_ORDERS)
+  );
 
   useEffect(() => {
-    localStorage.setItem('satvik_dashboard_orders', JSON.stringify(orders));
+    storage.set('satvik_dashboard_orders', orders);
+    storage.set('satvik_past_orders', orders);
   }, [orders]);
 
+  // Synchronize orders when updated from CartContext
+  useEffect(() => {
+    const handleSyncOrders = () => {
+      const saved = storage.get<Order[]>('satvik_dashboard_orders', []);
+      if (saved.length > 0) {
+        setOrders(saved);
+      }
+    };
+    window.addEventListener('satvik_orders_updated', handleSyncOrders);
+    return () => window.removeEventListener('satvik_orders_updated', handleSyncOrders);
+  }, []);
+
   // 3. Riders State
-  const [riders, setRiders] = useState<DeliveryRider[]>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_dashboard_riders');
-      return saved ? JSON.parse(saved) : INITIAL_RIDERS;
-    } catch {
-      return INITIAL_RIDERS;
-    }
-  });
+  const [riders, setRiders] = useState<DeliveryRider[]>(() =>
+    storage.get('satvik_dashboard_riders', INITIAL_RIDERS)
+  );
 
   useEffect(() => {
-    localStorage.setItem('satvik_dashboard_riders', JSON.stringify(riders));
+    storage.set('satvik_dashboard_riders', riders);
   }, [riders]);
 
   // 4. Staff State
-  const [canteenStaff, setCanteenStaff] = useState<CanteenStaff[]>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_dashboard_staff');
-      return saved ? JSON.parse(saved) : INITIAL_STAFF;
-    } catch {
-      return INITIAL_STAFF;
-    }
-  });
+  const [canteenStaff, setCanteenStaff] = useState<CanteenStaff[]>(() =>
+    storage.get('satvik_dashboard_staff', INITIAL_STAFF)
+  );
 
   useEffect(() => {
-    localStorage.setItem('satvik_dashboard_staff', JSON.stringify(canteenStaff));
+    storage.set('satvik_dashboard_staff', canteenStaff);
   }, [canteenStaff]);
 
-  // 5. Payments State (Razorpay Only)
-  const [payments, setPayments] = useState<PaymentRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_dashboard_payments');
-      return saved ? JSON.parse(saved) : INITIAL_PAYMENTS;
-    } catch {
-      return INITIAL_PAYMENTS;
-    }
-  });
+  // 5. Payments State
+  const [payments, setPayments] = useState<PaymentRecord[]>(() =>
+    storage.get('satvik_dashboard_payments', INITIAL_PAYMENTS)
+  );
 
   useEffect(() => {
-    localStorage.setItem('satvik_dashboard_payments', JSON.stringify(payments));
+    storage.set('satvik_dashboard_payments', payments);
   }, [payments]);
 
-  // 6. Complaints State (Phase 8)
-  const [complaints, setComplaints] = useState<Complaint[]>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_dashboard_complaints');
-      return saved ? JSON.parse(saved) : INITIAL_COMPLAINTS;
-    } catch {
-      return INITIAL_COMPLAINTS;
-    }
-  });
+  // 6. Complaints State
+  const [complaints, setComplaints] = useState<Complaint[]>(() =>
+    storage.get('satvik_dashboard_complaints', INITIAL_COMPLAINTS)
+  );
 
   useEffect(() => {
-    localStorage.setItem('satvik_dashboard_complaints', JSON.stringify(complaints));
+    storage.set('satvik_dashboard_complaints', complaints);
   }, [complaints]);
 
   const addComplaint = (data: Omit<Complaint, 'id' | 'createdAt' | 'status'>): Complaint => {
@@ -222,7 +195,6 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
     setComplaints((prev) => [newComplaint, ...prev]);
 
-    // Also link to order if exists
     setOrders((prev) =>
       prev.map((ord) => (ord.id === data.orderId ? { ...ord, complaint: newComplaint } : ord))
     );
@@ -238,22 +210,17 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   };
 
-  // 7. Feedback State (Phase 9)
+  // 7. Feedback State
   const [feedbacks, setFeedbacks] = useState<Feedback[]>(() => {
     const initialFbs: Feedback[] = [];
     INITIAL_ORDERS.forEach((o) => {
       if (o.feedback) initialFbs.push(o.feedback);
     });
-    try {
-      const saved = localStorage.getItem('satvik_dashboard_feedbacks');
-      return saved ? JSON.parse(saved) : initialFbs;
-    } catch {
-      return initialFbs;
-    }
+    return storage.get('satvik_dashboard_feedbacks', initialFbs);
   });
 
   useEffect(() => {
-    localStorage.setItem('satvik_dashboard_feedbacks', JSON.stringify(feedbacks));
+    storage.set('satvik_dashboard_feedbacks', feedbacks);
   }, [feedbacks]);
 
   const addFeedback = (data: Omit<Feedback, 'id' | 'createdAt'>): Feedback => {
@@ -264,7 +231,6 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
     setFeedbacks((prev) => [newFb, ...prev]);
 
-    // Attach to order
     setOrders((prev) =>
       prev.map((ord) => (ord.id === data.orderId ? { ...ord, feedback: newFb } : ord))
     );
@@ -273,17 +239,12 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // 8. Canteen Settings State
-  const [canteenSettings, setCanteenSettings] = useState<CanteenSettings>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_canteen_settings');
-      return saved ? JSON.parse(saved) : INITIAL_CANTEEN_SETTINGS;
-    } catch {
-      return INITIAL_CANTEEN_SETTINGS;
-    }
-  });
+  const [canteenSettings, setCanteenSettings] = useState<CanteenSettings>(() =>
+    storage.get('satvik_canteen_settings', INITIAL_CANTEEN_SETTINGS)
+  );
 
   useEffect(() => {
-    localStorage.setItem('satvik_canteen_settings', JSON.stringify(canteenSettings));
+    storage.set('satvik_canteen_settings', canteenSettings);
   }, [canteenSettings]);
 
   const updateCanteenSettings = (updates: Partial<CanteenSettings>) => {
@@ -308,8 +269,8 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return ord;
       });
 
-      // Notify customer storefront
-      localStorage.setItem('satvik_past_orders', JSON.stringify(updated));
+      storage.set('satvik_past_orders', updated);
+      storage.set('satvik_dashboard_orders', updated);
       window.dispatchEvent(new CustomEvent('satvik_orders_updated'));
       return updated;
     });
@@ -409,17 +370,14 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return newOrder;
   };
 
-  // Sync external order from customer app
   const syncExternalOrder = (order: Order) => {
     setOrders((prev) => {
-      const exists = prev.some((o) => o.id === order.id);
-      if (exists) return prev;
+      if (prev.some((o) => o.id === order.id)) return prev;
       return [order, ...prev];
     });
 
     setPayments((prev) => {
-      const exists = prev.some((p) => p.orderId === order.id);
-      if (exists) return prev;
+      if (prev.some((p) => p.orderId === order.id)) return prev;
       return [
         {
           id: 'pay_rec_' + Date.now(),
@@ -438,9 +396,15 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   };
 
-  // Rider Management
   const addRider = (riderData: Omit<DeliveryRider, 'id'>) => {
-    const newRider: DeliveryRider = { ...riderData, id: 'rider-' + Date.now() };
+    const newRider: DeliveryRider = {
+      ...riderData,
+      id: 'rider-' + Date.now(),
+      rating: 4.9,
+      totalDeliveries: 0,
+      joinedDate: 'Today',
+      isPureVegInsulatedBagVerified: true,
+    };
     setRiders((prev) => [...prev, newRider]);
   };
 
@@ -454,17 +418,10 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const toggleRiderStatus = (id: string) => {
     setRiders((prev) =>
-      prev.map((r) => {
-        if (r.id === id) {
-          const nextStatus = r.status === 'available' ? 'offline' : 'available';
-          return { ...r, status: nextStatus };
-        }
-        return r;
-      })
+      prev.map((r) => (r.id === id ? { ...r, status: r.status === 'available' ? 'offline' : 'available' } : r))
     );
   };
 
-  // Staff Management
   const addStaff = (staffData: Omit<CanteenStaff, 'id'>) => {
     const newStaff: CanteenStaff = { ...staffData, id: 'staff-' + Date.now() };
     setCanteenStaff((prev) => [...prev, newStaff]);
@@ -480,13 +437,7 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const toggleStaffDuty = (id: string) => {
     setCanteenStaff((prev) =>
-      prev.map((s) => {
-        if (s.id === id) {
-          const nextStatus = s.status === 'on_duty' ? 'off_duty' : 'on_duty';
-          return { ...s, status: nextStatus };
-        }
-        return s;
-      })
+      prev.map((s) => (s.id === id ? { ...s, status: s.status === 'on_duty' ? 'off_duty' : 'on_duty' } : s))
     );
   };
 
@@ -496,7 +447,6 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   };
 
-  // Payments Management
   const refundPayment = (paymentId: string) => {
     setPayments((prev) =>
       prev.map((p) => (p.id === paymentId ? { ...p, status: 'REFUNDED' } : p))
@@ -509,18 +459,19 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   };
 
-  // Reset to Clean Campus State
   const resetToCleanState = () => {
-    localStorage.removeItem('satvik_canteen_dishes');
-    localStorage.removeItem('satvik_dashboard_orders');
-    localStorage.removeItem('satvik_dashboard_riders');
-    localStorage.removeItem('satvik_dashboard_staff');
-    localStorage.removeItem('satvik_dashboard_payments');
-    localStorage.removeItem('satvik_dashboard_complaints');
-    localStorage.removeItem('satvik_dashboard_feedbacks');
-    localStorage.removeItem('satvik_canteen_settings');
-    localStorage.removeItem('satvik_past_orders');
-    localStorage.removeItem('satvik_cart_items');
+    [
+      'satvik_canteen_dishes',
+      'satvik_dashboard_orders',
+      'satvik_dashboard_riders',
+      'satvik_dashboard_staff',
+      'satvik_dashboard_payments',
+      'satvik_dashboard_complaints',
+      'satvik_dashboard_feedbacks',
+      'satvik_canteen_settings',
+      'satvik_past_orders',
+      'satvik_cart_items',
+    ].forEach((k) => storage.remove(k));
 
     setDishes(DEFAULT_DISHES);
     setOrders(INITIAL_ORDERS);

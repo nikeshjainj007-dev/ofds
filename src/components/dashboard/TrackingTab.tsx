@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { useDashboard } from '../../context/DashboardContext';
+import type { Order } from '../../types';
 
 export const TrackingTab: React.FC = () => {
   const { 
@@ -29,46 +30,45 @@ export const TrackingTab: React.FC = () => {
   const activeOrders = orders.filter(o => o.status !== 'DELIVERED' && o.status !== 'CANCELLED');
   const targetOrder = orders.find(o => o.id === activeTrackingOrderId) || activeOrders[0] || orders[0];
 
-  // Simulated GPS progression state (0% to 100%)
-  const [routeProgress, setRouteProgress] = useState<number>(() => {
-    if (!targetOrder) return 30;
-    if (targetOrder.status === 'PLACED') return 5;
-    if (targetOrder.status === 'KITCHEN_PREPARING') return 20;
-    if (targetOrder.status === 'RIDER_ASSIGNED') return 45;
-    if (targetOrder.status === 'OUT_FOR_DELIVERY') return 70;
-    if (targetOrder.status === 'DELIVERED') return 100;
-    return 35;
-  });
+  const getStatusProgress = (status?: Order['status']) => {
+    switch (status) {
+      case 'PLACED': return 5;
+      case 'KITCHEN_PREPARING': return 20;
+      case 'RIDER_ASSIGNED': return 45;
+      case 'OUT_FOR_DELIVERY': return 70;
+      case 'DELIVERED': return 100;
+      default: return 35;
+    }
+  };
 
+  const [simulatedProgress, setSimulatedProgress] = useState<number | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
 
-  // Sync progress when selected order changes
-  useEffect(() => {
-    if (!targetOrder) return;
-    if (targetOrder.status === 'PLACED') setRouteProgress(5);
-    else if (targetOrder.status === 'KITCHEN_PREPARING') setRouteProgress(20);
-    else if (targetOrder.status === 'RIDER_ASSIGNED') setRouteProgress(45);
-    else if (targetOrder.status === 'OUT_FOR_DELIVERY') setRouteProgress(70);
-    else if (targetOrder.status === 'DELIVERED') setRouteProgress(100);
-  }, [targetOrder?.id, targetOrder?.status]);
+  const routeProgress = simulatedProgress ?? getStatusProgress(targetOrder?.status);
+
+  const targetOrderId = targetOrder?.id;
+  const targetOrderStatus = targetOrder?.status;
 
   // Simulation timer
   useEffect(() => {
-    let interval: any = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
     if (isSimulating && routeProgress < 100) {
       interval = setInterval(() => {
-        setRouteProgress((prev) => {
-          if (prev >= 98) {
+        setSimulatedProgress((prev) => {
+          const current = prev ?? getStatusProgress(targetOrderStatus);
+          if (current >= 98) {
             setIsSimulating(false);
-            if (targetOrder) updateOrderStatus(targetOrder.id, 'DELIVERED');
+            if (targetOrderId) updateOrderStatus(targetOrderId, 'DELIVERED');
             return 100;
           }
-          return prev + 2;
+          return current + 2;
         });
       }, 600);
     }
-    return () => clearInterval(interval);
-  }, [isSimulating, routeProgress, targetOrder, updateOrderStatus]);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isSimulating, routeProgress, targetOrderId, targetOrderStatus, updateOrderStatus]);
 
   if (!targetOrder) {
     return (
@@ -173,7 +173,7 @@ export const TrackingTab: React.FC = () => {
             <button
               onClick={() => {
                 setIsSimulating(false);
-                setRouteProgress(20);
+                setSimulatedProgress(20);
                 if (targetOrder) updateOrderStatus(targetOrder.id, 'OUT_FOR_DELIVERY');
               }}
               className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs transition-colors"

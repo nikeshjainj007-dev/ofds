@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { CartItem, Dish, Address, Order } from '../types';
 import { COUPONS, DEFAULT_CAMPUS_ADDRESS } from '../data/mockData';
 import { INITIAL_ORDERS } from '../data/dashboardMockData';
+import { storage } from '../lib/storage';
 
 interface CartContextType {
   items: CartItem[];
@@ -12,8 +13,8 @@ interface CartContextType {
   totalCount: number;
   itemTotal: number;
   discount: number;
-  deliveryFee: number; // Always ₹0 on campus
-  platformFee: number; // ₹0
+  deliveryFee: number;
+  platformFee: number;
   gst: number;
   tip: number;
   setTip: (tip: number) => void;
@@ -35,14 +36,9 @@ interface CartContextType {
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [items, setItems] = useState<CartItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_cart_items');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [items, setItems] = useState<CartItem[]>(() =>
+    storage.get('satvik_cart_items', [])
+  );
 
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>('CAMPUSFREE');
   const [tip, setTip] = useState<number>(0);
@@ -68,39 +64,28 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ]);
   const [selectedAddress, setSelectedAddress] = useState<Address>(DEFAULT_CAMPUS_ADDRESS);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
-  const [pastOrders, setPastOrders] = useState<Order[]>(() => {
-    try {
-      const saved = localStorage.getItem('satvik_past_orders');
-      return saved ? JSON.parse(saved) : INITIAL_ORDERS;
-    } catch {
-      return INITIAL_ORDERS;
-    }
-  });
+  const [pastOrders, setPastOrders] = useState<Order[]>(() =>
+    storage.get('satvik_dashboard_orders', storage.get('satvik_past_orders', INITIAL_ORDERS))
+  );
 
   useEffect(() => {
-    localStorage.setItem('satvik_cart_items', JSON.stringify(items));
+    storage.set('satvik_cart_items', items);
   }, [items]);
 
   useEffect(() => {
-    localStorage.setItem('satvik_past_orders', JSON.stringify(pastOrders));
+    storage.set('satvik_past_orders', pastOrders);
   }, [pastOrders]);
 
   // Synchronize orders when changed by Dashboard
   useEffect(() => {
     const handleOrdersUpdated = () => {
-      try {
-        const saved = localStorage.getItem('satvik_past_orders');
-        if (saved) {
-          const parsed: Order[] = JSON.parse(saved);
-          setPastOrders(parsed);
-          setActiveOrder((prev) => {
-            if (!prev) return parsed[0] || null;
-            const found = parsed.find((o) => o.id === prev.id);
-            return found || prev;
-          });
-        }
-      } catch (e) {
-        console.error('Failed to sync past orders', e);
+      const saved = storage.get<Order[]>('satvik_dashboard_orders', storage.get<Order[]>('satvik_past_orders', []));
+      if (saved.length > 0) {
+        setPastOrders(saved);
+        setActiveOrder((prev) => {
+          if (!prev) return saved[0] || null;
+          return saved.find((o) => o.id === prev.id) || prev;
+        });
       }
     };
 
@@ -157,22 +142,20 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   let discount = 0;
   if (appliedCoupon && itemTotal > 0) {
     const couponObj = COUPONS.find((c) => c.code === appliedCoupon);
-    if (couponObj) {
-      if (itemTotal >= (couponObj.minOrder || 0)) {
-        if (couponObj.discountPercent) {
-          const calc = Math.round((itemTotal * couponObj.discountPercent) / 100);
-          discount = couponObj.maxDiscount ? Math.min(calc, couponObj.maxDiscount) : calc;
-        } else if (couponObj.flatDiscount) {
-          discount = couponObj.flatDiscount;
-        }
+    if (couponObj && itemTotal >= (couponObj.minOrder || 0)) {
+      if (couponObj.discountPercent) {
+        const calc = Math.round((itemTotal * couponObj.discountPercent) / 100);
+        discount = couponObj.maxDiscount ? Math.min(calc, couponObj.maxDiscount) : calc;
+      } else if (couponObj.flatDiscount) {
+        discount = couponObj.flatDiscount;
       }
     }
   }
 
-  // Delivery Fee is strictly ₹0 (Campus Policy: No Delivery Charges)
+  // Delivery Fee is strictly ₹0 (Campus Policy)
   const deliveryFee = 0;
   const platformFee = 0;
-  const gst = itemTotal === 0 ? 0 : Math.round(itemTotal * 0.05); // 5% GST
+  const gst = itemTotal === 0 ? 0 : Math.round(itemTotal * 0.05);
   const grandTotal = Math.max(0, itemTotal - discount + deliveryFee + platformFee + gst + tip);
 
   const applyCoupon = (code: string) => {
@@ -205,7 +188,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: 'ORD-' + Math.floor(100000 + Math.random() * 900000),
       items: [...items],
       itemTotal,
-      deliveryFee: 0, // ₹0 No Delivery Charges
+      deliveryFee: 0,
       platformFee: 0,
       gst,
       discount,
@@ -237,16 +220,12 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setActiveOrder(newOrder);
     clearCart();
 
-    // Notify Dashboard
-    try {
-      const existingDashOrders = localStorage.getItem('satvik_dashboard_orders');
-      const parsedOrders: Order[] = existingDashOrders ? JSON.parse(existingDashOrders) : [];
-      const updatedDash = [newOrder, ...parsedOrders];
-      localStorage.setItem('satvik_dashboard_orders', JSON.stringify(updatedDash));
-      window.dispatchEvent(new CustomEvent('satvik_orders_updated'));
-    } catch (e) {
-      console.error('Failed to notify dashboard of new order', e);
-    }
+    // Synchronize to dashboard orders in storage and dispatch event
+    const existing = storage.get<Order[]>('satvik_dashboard_orders', []);
+    const updated = [newOrder, ...existing.filter((o) => o.id !== newOrder.id)];
+    storage.set('satvik_dashboard_orders', updated);
+    storage.set('satvik_past_orders', updated);
+    window.dispatchEvent(new CustomEvent('satvik_orders_updated'));
 
     return newOrder;
   };

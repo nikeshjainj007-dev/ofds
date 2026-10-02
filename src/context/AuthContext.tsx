@@ -1,8 +1,11 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabaseClient';
+import { storage } from '../lib/storage';
 import type { UserProfile } from '../types';
 import { CAMPUS_PICKUP_ZONES } from '../types';
+
+const STORAGE_KEY = 'satvik_user_profile';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -31,20 +34,48 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    try {
-      const savedUser = localStorage.getItem('satvik_user_profile');
-      if (savedUser) return JSON.parse(savedUser);
-      return null;
-    } catch {
-      return null;
-    }
-  });
-
+  const [user, setUser] = useState<UserProfile | null>(() => storage.get<UserProfile | null>(STORAGE_KEY, null));
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [generatedOtpCode, setGeneratedOtpCode] = useState<string | null>('489201');
+
+  const syncSupabaseUser = useCallback(async (currentSession: Session) => {
+    try {
+      const authUser = currentSession.user;
+      const meta = authUser.user_metadata || {};
+      const userEmail = authUser.email || '';
+
+      const { data: dbProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('email', userEmail)
+        .maybeSingle();
+
+      const resolvedName =
+        dbProfile?.name ||
+        meta.full_name ||
+        meta.name ||
+        userEmail.split('@')[0] ||
+        'Campus Scholar';
+
+      const mergedProfile: UserProfile = {
+        id: authUser.id,
+        name: resolvedName,
+        email: userEmail,
+        phone: dbProfile?.phone || meta.phone || '',
+        role: (dbProfile?.role as 'Student' | 'Teacher') || 'Student',
+        dob: dbProfile?.dob || '2003-01-01',
+        usn: dbProfile?.usn || '1RV21CS042',
+        pickupZone: dbProfile?.pickup_zone || CAMPUS_PICKUP_ZONES[0],
+      };
+
+      setUser(mergedProfile);
+      storage.set(STORAGE_KEY, mergedProfile);
+    } catch (syncErr) {
+      console.warn('Sync Supabase user error:', syncErr);
+    }
+  }, []);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -76,44 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
-
-  const syncSupabaseUser = async (currentSession: Session) => {
-    try {
-      const authUser = currentSession.user;
-      const meta = authUser.user_metadata || {};
-      const userEmail = authUser.email || '';
-
-      const { data: dbProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('email', userEmail)
-        .maybeSingle();
-
-      const resolvedName =
-        dbProfile?.name ||
-        meta.full_name ||
-        meta.name ||
-        userEmail.split('@')[0] ||
-        'Campus Scholar';
-
-      const mergedProfile: UserProfile = {
-        id: authUser.id,
-        name: resolvedName,
-        email: userEmail,
-        phone: dbProfile?.phone || meta.phone || '',
-        role: (dbProfile?.role as 'Student' | 'Teacher') || 'Student',
-        dob: dbProfile?.dob || '2003-01-01',
-        usn: dbProfile?.usn || '1RV21CS042',
-        pickupZone: dbProfile?.pickup_zone || CAMPUS_PICKUP_ZONES[0],
-      };
-
-      setUser(mergedProfile);
-      localStorage.setItem('satvik_user_profile', JSON.stringify(mergedProfile));
-    } catch (syncErr) {
-      console.warn('Sync Supabase user error:', syncErr);
-    }
-  };
+  }, [syncSupabaseUser]);
 
   const openAuthModal = () => setIsAuthModalOpen(true);
   const closeAuthModal = () => setIsAuthModalOpen(false);
@@ -121,16 +115,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Send OTP to Email or Phone
   const sendOtp = async (identifier: string, isPhone: boolean = false) => {
     const cleanId = identifier.trim();
-    // Generate a fresh 6-digit OTP code
     const otpCode = String(Math.floor(100000 + Math.random() * 900000));
     setGeneratedOtpCode(otpCode);
 
-    // Prompt specifies exact message format: Your otp is "#otpcode"
     const displayOtpMessage = `Your otp is "${otpCode}"`;
 
     try {
       if (!isPhone && cleanId.includes('@')) {
-        // Attempt backend email dispatch
         fetch('/api/send-otp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -160,7 +151,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanId = identifier.trim();
     const cleanCode = code.trim().replace(/^#/, '');
 
-    // Allow generated OTP code, standard 123456, or demo codes
     const isCodeValid =
       cleanCode === generatedOtpCode ||
       ['123456', '849201', '012345'].includes(cleanCode);
@@ -191,7 +181,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setUser(newProfile);
-    localStorage.setItem('satvik_user_profile', JSON.stringify(newProfile));
+    storage.set(STORAGE_KEY, newProfile);
 
     // Upsert to Supabase
     try {
@@ -205,8 +195,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         pickup_zone: newProfile.pickupZone,
         updated_at: new Date().toISOString(),
       });
-    } catch (e) {
-      // ignore
+    } catch {
+      // Offline fallback
     }
 
     return {
@@ -233,18 +223,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       await supabase.auth.signOut();
-    } catch (e) {
+    } catch {
       // ignore
     }
     setUser(null);
-    localStorage.removeItem('satvik_user_profile');
+    storage.remove(STORAGE_KEY);
   };
 
   const updateProfile = async (profileData: Partial<UserProfile>) => {
     if (!user) return { success: false, message: 'No user active' };
     const updated = { ...user, ...profileData };
     setUser(updated);
-    localStorage.setItem('satvik_user_profile', JSON.stringify(updated));
+    storage.set(STORAGE_KEY, updated);
     return { success: true, message: 'Profile updated successfully!' };
   };
 

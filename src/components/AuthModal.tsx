@@ -53,28 +53,23 @@ export const AuthModal: React.FC = () => {
 
   const otpInputsRef = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Reset state on open
-  useEffect(() => {
-    if (isAuthModalOpen) {
-      setStep(1);
-      setAuthMode('login');
-      setIdentifier('');
-      setFullName('');
-      setUsn(role === 'Student' ? '1RV21CS042' : 'FAC-ENG-102');
-      setOtpDigits(['', '', '', '', '', '']);
-      setIsLoading(false);
-      setIsGoogleLoading(false);
-    }
-  }, [isAuthModalOpen]);
+  const handleClose = () => {
+    closeAuthModal();
+    setStep(1);
+    setAuthMode('login');
+    setIdentifier('');
+    setFullName('');
+    setOtpDigits(['', '', '', '', '', '']);
+    setIsLoading(false);
+    setIsGoogleLoading(false);
+  };
 
   // Resend countdown
   useEffect(() => {
-    let interval: any;
-    if (step === 2 && resendTimer > 0) {
-      interval = setInterval(() => {
-        setResendTimer((prev) => prev - 1);
-      }, 1000);
-    }
+    if (step !== 2 || resendTimer <= 0) return;
+    const interval = setInterval(() => {
+      setResendTimer((prev) => prev - 1);
+    }, 1000);
     return () => clearInterval(interval);
   }, [step, resendTimer]);
 
@@ -188,7 +183,7 @@ export const AuthModal: React.FC = () => {
 
       if (result.success) {
         showToast(result.message, 'success', 'Login Successful');
-        closeAuthModal();
+        handleClose();
       } else {
         showToast(result.message, 'error', 'Verification Failed');
       }
@@ -218,7 +213,7 @@ export const AuthModal: React.FC = () => {
         {/* Header Bar */}
         <div className="bg-gradient-to-r from-emerald-800 to-green-700 p-6 text-white relative flex-shrink-0">
           <button
-            onClick={closeAuthModal}
+            onClick={handleClose}
             className="absolute top-5 right-5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
           >
             <X className="w-4 h-4" />

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { 
   CreditCard, 
   Search, 
@@ -41,19 +41,17 @@ export const PaymentsTab: React.FC = () => {
 
 
   // Filtered transactions
-  const filteredPayments = useMemo(() => {
-    return payments.filter((p) => {
-      if (filterStatus !== 'ALL' && p.status !== filterStatus) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesOrder = p.orderId.toLowerCase().includes(q);
-        const matchesRef = p.transactionRef.toLowerCase().includes(q);
-        const matchesCust = p.customerName.toLowerCase().includes(q);
-        if (!matchesOrder && !matchesRef && !matchesCust) return false;
-      }
-      return true;
-    });
-  }, [payments, filterStatus, searchQuery]);
+  const filteredPayments = payments.filter((p) => {
+    if (filterStatus !== 'ALL' && p.status !== filterStatus) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchesOrder = p.orderId.toLowerCase().includes(q);
+      const matchesRef = p.transactionRef.toLowerCase().includes(q);
+      const matchesCust = p.customerName.toLowerCase().includes(q);
+      if (!matchesOrder && !matchesRef && !matchesCust) return false;
+    }
+    return true;
+  });
 
   const handleExportCSV = () => {
     const headers = ['Transaction ID,Order ID,Customer,Amount (INR),Method,Status,Ref,Timestamp'];

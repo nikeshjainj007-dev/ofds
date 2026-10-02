@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { 
   X, 
   CheckCircle2, 
@@ -33,20 +33,10 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
   const { updateOrderStatus } = useDashboard();
   const order = propOrder || activeOrder || pastOrders[0];
 
-  const [activeStep, setActiveStep] = useState<number>(4);
-
-  useEffect(() => {
-    if (!order) return;
-    if (order.status === 'DELIVERED') {
-      setActiveStep(4);
-    } else if (order.status === 'OUT_FOR_DELIVERY') {
-      setActiveStep(3);
-    } else if (order.status === 'KITCHEN_PREPARING') {
-      setActiveStep(2);
-    } else {
-      setActiveStep(1);
-    }
-  }, [order]);
+  const activeStep = !order ? 1 :
+    order.status === 'DELIVERED' ? 4 :
+    order.status === 'OUT_FOR_DELIVERY' ? 3 :
+    order.status === 'KITCHEN_PREPARING' ? 2 : 1;
 
   if (!isOpen || !order) return null;
 
@@ -58,7 +48,6 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
   ];
 
   const handleSimulateDelivery = () => {
-    setActiveStep(4);
     updateOrderStatus(order.id, 'DELIVERED');
   };
 

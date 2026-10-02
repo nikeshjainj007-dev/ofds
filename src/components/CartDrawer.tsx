@@ -121,7 +121,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onOrderSuccess }) => {
               spread: 60,
               origin: { y: 0.6 }
             });
-          } catch (e) {
+          } catch {
             // ignore
           }
           showToast(`Order placed successfully! Razorpay Ref: ${paymentId}`, 'success', 'Payment Verified');

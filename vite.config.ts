@@ -176,5 +176,23 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), twilioEmailOtpPlugin(env)],
+    build: {
+      chunkSizeWarningLimit: 800,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/@clerk')) {
+              return 'clerk';
+            }
+            if (id.includes('node_modules/@supabase')) {
+              return 'supabase';
+            }
+            if (id.includes('node_modules/lucide-react')) {
+              return 'lucide';
+            }
+          },
+        },
+      },
+    },
   };
 });
