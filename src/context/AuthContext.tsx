@@ -233,10 +233,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: cleanEmail,
             name: resolvedName,
             dob: resolvedDob,
-            phone: profileData?.phone?.trim() || '',
-            role: profileData?.role || 'Student',
-            usn: profileData?.usn?.trim() || '1RV21CS042',
-            pickup_zone: profileData?.pickupZone || CAMPUS_PICKUP_ZONES[0],
+            phone: profileData?.phone?.trim() || null,
             updated_at: new Date().toISOString(),
           }, { onConflict: 'email' });
         } catch (dbErr) {

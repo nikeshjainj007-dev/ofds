@@ -86,12 +86,57 @@ export default async function handler(req, res) {
 
     const secretKey = process.env.OTP_SECRET_KEY || authToken || 'satvikbite-secure-auth-secret-hmac-key';
 
+    // 1. Generate & Record OTP in Supabase Database (Profiles Table)
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const hashedOtp = crypto.createHash('sha256').update(`${targetEmail}:${otpCode}:${expiresAt}`).digest('hex');
+    const otpRecordId = `auth_otp_${Buffer.from(targetEmail).toString('hex').slice(0, 32)}`;
+
+    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+      try {
+        await supabase.from('profiles').upsert({
+          id: otpRecordId,
+          email: `otp_${targetEmail}`,
+          address: `active_otp:${hashedOtp}:${expiresAt}`,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+      } catch (supaErr) {
+        console.warn('[Supabase OTP Persist Notice]:', supaErr.message);
+      }
+    }
+
     let twilioDelivered = false;
-    let providerUsed = 'none';
+    let providerUsed = 'supabase_stored_twilio';
     let deliveredCode = otpCode;
 
-    // 1. Prioritize Twilio SendGrid API
-    if (sendGridApiKey) {
+    // 2. Custom SMTP Transporter (if configured)
+    if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+      try {
+        const nodemailer = (await import('nodemailer')).default;
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: parseInt(process.env.SMTP_PORT || '587', 10),
+          secure: process.env.SMTP_SECURE === 'true',
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        });
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM || process.env.SMTP_USER,
+          to: targetEmail,
+          subject: 'Your Verification Code',
+          text: emailBodyText,
+          html: emailBodyHtml,
+        });
+        twilioDelivered = true;
+        providerUsed = 'smtp_email';
+      } catch (smtpErr) {
+        console.warn('[SMTP Email Fallback] Error:', smtpErr.message);
+      }
+    }
+
+    // 3. Prioritize Twilio SendGrid API
+    if (!twilioDelivered && sendGridApiKey) {
       try {
         const sgRes = await fetch('https://api.sendgrid.com/v3/mail/send', {
           method: 'POST',
@@ -228,7 +273,6 @@ export default async function handler(req, res) {
 
     // Generate stateless cryptographic HMAC signature of targetEmail + deliveredCode + expiresAt
     // CRITICAL SECURITY CONSTRAINT: deliveredCode is NEVER sent back in the response or token!
-    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes expiry
     const dataToSign = `${targetEmail}:${deliveredCode}:${expiresAt}`;
     const hmacSignature = crypto.createHmac('sha256', secretKey).update(dataToSign).digest('hex');
     const otpToken = `${hmacSignature}.${expiresAt}`;
