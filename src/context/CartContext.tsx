@@ -40,7 +40,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     storage.get('satvik_cart_items', [])
   );
 
-  const [appliedCoupon, setAppliedCoupon] = useState<string | null>('CAMPUSFREE');
+  const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
   const [tip, setTip] = useState<number>(0);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [addresses] = useState<Address[]>([
@@ -212,11 +212,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       riderName: assignedRunner,
       riderPhone: '+91 98450 12345',
       estimatedMinutes: 15,
-      customerName: userMeta?.name || 'Campus Student',
-      customerPhone: userMeta?.phone || '+91 98450 00000',
-      customerEmail: userMeta?.email || 'student@campus.edu',
+      customerName: userMeta?.name || '',
+      customerPhone: userMeta?.phone || '',
+      customerEmail: userMeta?.email || '',
       customerRole: userMeta?.role || 'Student',
-      customerUsn: userMeta?.usn || '1RV23CS001',
+      customerUsn: userMeta?.usn || '',
       orderSlot: new Date().getHours() < 12 ? 'Breakfast' : 'Lunch',
       restaurantName: items[0]?.dish.restaurantName || 'Campus Canteen Main Counter',
     };

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabaseClient';
 import { storage } from '../lib/storage';
@@ -13,18 +13,20 @@ interface AuthContextType {
   loading: boolean;
   isAuthModalOpen: boolean;
   authModalMode: 'login' | 'signup';
+  verifiedEmailSuccess: boolean;
+  setVerifiedEmailSuccess: (val: boolean) => void;
   openAuthModal: (mode?: 'login' | 'signup' | unknown) => void;
   closeAuthModal: () => void;
-  sendOtp: (email: string) => Promise<{
-    success: boolean;
-    message: string;
-  }>;
-  verifyOtp: (
+  loginWithPassword: (
     email: string,
-    code: string,
-    profileData?: Partial<UserProfile>,
-    mode?: 'signup' | 'login'
-  ) => Promise<{ success: boolean; message: string; requiresRedirectToLogin?: boolean }>;
+    password: string
+  ) => Promise<{ success: boolean; message: string; accountNotExists?: boolean }>;
+  signUpWithPassword: (payload: {
+    name: string;
+    dob: string;
+    email: string;
+    password: string;
+  }) => Promise<{ success: boolean; message: string; alreadyExists?: boolean }>;
   signInWithGoogle: () => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   updateProfile: (profileData: Partial<UserProfile>) => Promise<{ success: boolean; message: string }>;
@@ -37,14 +39,19 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<UserProfile | null>(() => storage.get<UserProfile | null>(STORAGE_KEY, null));
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    const saved = storage.get<UserProfile | null>(STORAGE_KEY, null);
+    if (saved && (saved.email.startsWith('test') || saved.id.startsWith('test') || saved.name.includes('Test Candidate'))) {
+      storage.remove(STORAGE_KEY);
+      return null;
+    }
+    return saved;
+  });
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'signup'>('login');
-
-  // Token map for stateless OTP verification without frontend code leakage
-  const otpTokensRef = useRef<Record<string, string>>({});
+  const [verifiedEmailSuccess, setVerifiedEmailSuccess] = useState<boolean>(false);
 
   // Fallback UI State for Google OAuth DOB
   const [needsDobFallback, setNeedsDobFallback] = useState<boolean>(false);
@@ -56,8 +63,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const meta = authUser.user_metadata || {};
       const userEmail = (authUser.email || '').trim().toLowerCase();
 
-      // Ensure exact name from Google is captured
-      const googleName =
+      // Ensure exact name from Google or metadata
+      const profileName =
         meta.full_name ||
         meta.name ||
         userEmail.split('@')[0] ||
@@ -72,34 +79,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const existingDob = dbProfile?.dob || meta.birthday || meta.dob || '';
 
-      // Feature 3: Fallback UI if DOB is not provided by Google default scopes
-      if (!existingDob) {
+      // Google OAuth DOB Fallback check
+      if (!existingDob && authUser.app_metadata.provider === 'google') {
         setDobFallbackUser({
           id: authUser.id,
           email: userEmail,
-          name: dbProfile?.name || googleName,
+          name: dbProfile?.name || profileName,
         });
         setNeedsDobFallback(true);
       }
 
       const mergedProfile: UserProfile = {
         id: authUser.id,
-        name: dbProfile?.name || googleName,
+        name: dbProfile?.name || profileName,
         email: userEmail,
         phone: dbProfile?.phone || meta.phone || '',
         role: (dbProfile?.role as 'Student' | 'Teacher') || 'Student',
         dob: existingDob,
-        usn: dbProfile?.usn || '1RV21CS042',
+        usn: dbProfile?.usn || '',
         pickupZone: dbProfile?.pickup_zone || CAMPUS_PICKUP_ZONES[0],
         created_at: dbProfile?.created_at || new Date().toISOString(),
       };
 
-      // Ensure Google user's name is saved in database exactly as provided by Google
       try {
         await supabase.from('profiles').upsert({
           id: authUser.id,
           email: userEmail,
-          name: dbProfile?.name || googleName,
+          name: dbProfile?.name || profileName,
           dob: existingDob,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'email' });
@@ -114,13 +120,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  // Handle URL email verification link return
+  useEffect(() => {
+    const handleUrlAuth = async () => {
+      const hash = window.location.hash || '';
+      const search = window.location.search || '';
+
+      const isVerificationReturn =
+        hash.includes('auth-verified') ||
+        hash.includes('type=signup') ||
+        hash.includes('type=email_confirmation') ||
+        search.includes('type=signup') ||
+        search.includes('type=email_confirmation');
+
+      if (isVerificationReturn) {
+        // PDF: "After customer receive the sign in link and click it verify it and redirect to the login page(user enters email and passwords)."
+        try {
+          await supabase.auth.signOut();
+        } catch {
+          // ignore
+        }
+        setUser(null);
+        storage.remove(STORAGE_KEY);
+        window.history.replaceState(null, '', window.location.pathname);
+        setAuthModalMode('login');
+        setIsAuthModalOpen(true);
+        setVerifiedEmailSuccess(true);
+      }
+    };
+
+    handleUrlAuth();
+  }, []);
+
   useEffect(() => {
     const initAuth = async () => {
       try {
         const { data: { session: currentSession } } = await supabase.auth.getSession();
         if (currentSession) {
-          setSession(currentSession);
-          await syncSupabaseUser(currentSession);
+          const hash = window.location.hash || '';
+          if (hash.includes('type=signup') || hash.includes('type=email_confirmation') || hash.includes('auth-verified')) {
+            await supabase.auth.signOut();
+            setUser(null);
+            storage.remove(STORAGE_KEY);
+          } else {
+            setSession(currentSession);
+            await syncSupabaseUser(currentSession);
+          }
         }
       } catch (err) {
         console.error('Error fetching Supabase session:', err);
@@ -133,9 +178,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, currentSession) => {
+        const hash = window.location.hash || '';
+        if (hash.includes('type=signup') || hash.includes('type=email_confirmation') || hash.includes('auth-verified')) {
+          try {
+            await supabase.auth.signOut();
+          } catch {}
+          setUser(null);
+          storage.remove(STORAGE_KEY);
+          window.history.replaceState(null, '', window.location.pathname);
+          setAuthModalMode('login');
+          setIsAuthModalOpen(true);
+          setVerifiedEmailSuccess(true);
+          setLoading(false);
+          return;
+        }
+
         if (currentSession) {
           setSession(currentSession);
           await syncSupabaseUser(currentSession);
+        } else {
+          setSession(null);
         }
         setLoading(false);
       }
@@ -152,139 +214,154 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsAuthModalOpen(true);
   };
 
-  const closeAuthModal = () => setIsAuthModalOpen(false);
-
-  // Send OTP to Email via Twilio API
-  const sendOtp = async (email: string) => {
-    const cleanEmail = email.trim().toLowerCase();
-    try {
-      const res = await fetch('/api/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        return {
-          success: false,
-          message: data.message || 'Unable to send verification email. Please try again.',
-        };
-      }
-
-      // Store stateless verification token without exposing OTP code
-      if (data.otpToken) {
-        otpTokensRef.current[cleanEmail] = data.otpToken;
-      }
-
-      return {
-        success: true,
-        message: data.message || `Verification code sent to ${cleanEmail}. Please check your email inbox and Spam folder.`,
-      };
-    } catch (err: any) {
-      console.error('[sendOtp Exception]:', err);
-      return {
-        success: false,
-        message: err.message || 'Network error sending verification code',
-      };
-    }
+  const closeAuthModal = () => {
+    setIsAuthModalOpen(false);
+    setVerifiedEmailSuccess(false);
   };
 
-  // Verify OTP
-  const verifyOtp = async (
+  // 1. Password Login (Page 1)
+  const loginWithPassword = async (
     email: string,
-    code: string,
-    profileData?: Partial<UserProfile>,
-    mode: 'signup' | 'login' = 'login'
-  ) => {
+    password: string
+  ): Promise<{ success: boolean; message: string; accountNotExists?: boolean }> => {
     const cleanEmail = email.trim().toLowerCase();
-    const cleanCode = code.trim().replace(/^#/, '');
-    const otpToken = otpTokensRef.current[cleanEmail] || '';
+    const cleanPassword = password.trim();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, message: 'Please enter a valid email address.' };
+    }
+    if (!cleanPassword) {
+      return { success: false, message: 'Please enter your password.' };
+    }
 
     try {
-      const res = await fetch('/api/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: cleanEmail,
-          code: cleanCode,
-          otpToken,
-        }),
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: cleanPassword,
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (error) {
+        // PDF Requirement:
+        // "if the login creditienals are not there says Account do not exist and Redirect to Sign up option."
         return {
           success: false,
-          message: data.message || 'Invalid or expired verification code.',
+          message: 'Account does not exist. Redirecting to Sign up option...',
+          accountNotExists: true,
         };
       }
 
-      // FEATURE 1: User Signup Flow (New Users)
-      // Save Name, DOB, and Email to the database, and immediately redirect to Login page
-      if (mode === 'signup') {
-        const newProfileId = 'usr-' + Math.floor(100000 + Math.random() * 900000);
-        const resolvedName = profileData?.name?.trim() || cleanEmail.split('@')[0];
-        const resolvedDob = profileData?.dob?.trim() || '';
-
-        try {
-          await supabase.from('profiles').upsert({
-            id: newProfileId,
-            email: cleanEmail,
-            name: resolvedName,
-            dob: resolvedDob,
-            phone: profileData?.phone?.trim() || null,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'email' });
-        } catch (dbErr) {
-          console.warn('Signup database save notice:', dbErr);
-        }
-
+      if (data.session && data.user) {
+        setSession(data.session);
+        await syncSupabaseUser(data.session);
         return {
           success: true,
-          message: 'Registration successful! Name, DOB, and Email saved to database. Please log in with your email.',
-          requiresRedirectToLogin: true,
+          message: 'Logged in successfully!',
         };
       }
 
-      // FEATURE 2: User Login Flow (Returning Users)
-      // Fetch user profile from database and authenticate
-      const { data: dbProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('email', cleanEmail)
-        .maybeSingle();
-
-      const resolvedName = dbProfile?.name || cleanEmail.split('@')[0];
-      const loggedProfile: UserProfile = {
-        id: dbProfile?.id || 'usr-' + Math.floor(100000 + Math.random() * 900000),
-        name: resolvedName,
-        email: cleanEmail,
-        phone: dbProfile?.phone || '',
-        role: (dbProfile?.role as 'Student' | 'Teacher') || 'Student',
-        dob: dbProfile?.dob || '',
-        usn: dbProfile?.usn || '1RV21CS042',
-        pickupZone: dbProfile?.pickup_zone || CAMPUS_PICKUP_ZONES[0],
-        created_at: dbProfile?.created_at || new Date().toISOString(),
-      };
-
-      setUser(loggedProfile);
-      storage.set(STORAGE_KEY, loggedProfile);
-
-      return {
-        success: true,
-        message: `Welcome back, ${resolvedName}! Logged in successfully.`,
-      };
-    } catch (err: any) {
-      console.error('[verifyOtp Exception]:', err);
       return {
         success: false,
-        message: err.message || 'Network error verifying code',
+        message: 'Account does not exist. Redirecting to Sign up option...',
+        accountNotExists: true,
+      };
+    } catch (err: any) {
+      console.error('[loginWithPassword Exception]:', err);
+      return {
+        success: false,
+        message: 'Account does not exist. Redirecting to Sign up option...',
+        accountNotExists: true,
       };
     }
   };
 
-  // Feature 3: Continue with Google with scopes configured for Name and DOB
+  // 2. Signup with Password & Verification Link (Page 2)
+  const signUpWithPassword = async (payload: {
+    name: string;
+    dob: string;
+    email: string;
+    password: string;
+  }): Promise<{ success: boolean; message: string; alreadyExists?: boolean }> => {
+    const cleanEmail = payload.email.trim().toLowerCase();
+    const cleanName = payload.name.trim();
+    const cleanDob = payload.dob.trim();
+    const cleanPassword = payload.password;
+
+    if (!cleanName) {
+      return { success: false, message: 'Please enter your full name.' };
+    }
+    if (!cleanDob) {
+      return { success: false, message: 'Please select your Date of Birth (DOB).' };
+    }
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, message: 'Please enter a valid email address.' };
+    }
+    if (!cleanPassword) {
+      return { success: false, message: 'Please enter a strong password.' };
+    }
+
+    try {
+      // Sign up with Supabase Auth with redirect URL for email verification
+      const redirectUrl = `${window.location.origin}/#auth-verified`;
+      const { data, error } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: cleanPassword,
+        options: {
+          data: {
+            full_name: cleanName,
+            dob: cleanDob,
+          },
+          emailRedirectTo: redirectUrl,
+        },
+      });
+
+      if (error) {
+        const errMsg = error.message?.toLowerCase() || '';
+        if (
+          errMsg.includes('already registered') ||
+          errMsg.includes('already exists') ||
+          errMsg.includes('user already exists')
+        ) {
+          return {
+            success: false,
+            message: 'An account with this email already exists. Please log in.',
+            alreadyExists: true,
+          };
+        }
+        return {
+          success: false,
+          message: error.message || 'Unable to register account. Please try again.',
+        };
+      }
+
+      // Save profile details into Supabase public.profiles table
+      const profileId = data.user?.id || ('usr-' + Date.now());
+      try {
+        await supabase.from('profiles').upsert({
+          id: profileId,
+          email: cleanEmail,
+          name: cleanName,
+          dob: cleanDob,
+          role: 'Student',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'email' });
+      } catch (dbErr) {
+        console.warn('Profile save warning during signup:', dbErr);
+      }
+
+      return {
+        success: true,
+        message: `A sign-in link has been sent to ${cleanEmail} for authentication. Please click it to verify.`,
+      };
+    } catch (err: any) {
+      console.error('[signUpWithPassword Exception]:', err);
+      return {
+        success: false,
+        message: err.message || 'Error creating account. Please try again.',
+      };
+    }
+  };
+
+  // Google Sign-In
   const signInWithGoogle = async () => {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -301,7 +378,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Feature 3 Fallback UI submission for Google OAuth DOB
   const submitDobFallback = async (dob: string) => {
     if (!dobFallbackUser) {
       return { success: false, message: 'No Google user pending DOB verification' };
@@ -389,10 +465,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         isAuthModalOpen,
         authModalMode,
+        verifiedEmailSuccess,
+        setVerifiedEmailSuccess,
         openAuthModal,
         closeAuthModal,
-        sendOtp,
-        verifyOtp,
+        loginWithPassword,
+        signUpWithPassword,
         signInWithGoogle,
         logout,
         updateProfile,
@@ -414,4 +492,3 @@ export const useAuth = () => {
   }
   return context;
 };
-

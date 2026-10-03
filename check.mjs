@@ -61,4 +61,30 @@ const getRouteProgress = (status) => {
 assert.strictEqual(getRouteProgress('PLACED'), 5);
 assert.strictEqual(getRouteProgress('DELIVERED'), 100);
 
+// Test 5: Strong Password validation
+const isStrongPassword = (pass) => {
+  const minLength = pass.length >= 8;
+  const hasUpper = /[A-Z]/.test(pass);
+  const hasLower = /[a-z]/.test(pass);
+  const hasNumber = /[0-9]/.test(pass);
+  const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(pass);
+  return minLength && hasUpper && hasLower && hasNumber && hasSpecial;
+};
+
+assert.strictEqual(isStrongPassword('weak'), false);
+assert.strictEqual(isStrongPassword('weakpass123'), false); // missing upper & special
+assert.strictEqual(isStrongPassword('WeakPass123'), false); // missing special
+assert.strictEqual(isStrongPassword('WeakPass123!'), true); // all criteria met
+
+// Test 6: Login credential fallback to signup redirect logic
+const handleLoginResult = (result) => {
+  if (!result.success) {
+    return { redirect: 'signup', message: 'Account does not exist. Redirecting to Sign up option...' };
+  }
+  return { redirect: null, message: 'Logged in successfully!' };
+};
+
+const failedLogin = handleLoginResult({ success: false, accountNotExists: true });
+assert.strictEqual(failedLogin.redirect, 'signup');
+
 console.log('✔ All Ponytail self-checks passed successfully!');

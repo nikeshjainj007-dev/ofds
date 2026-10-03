@@ -351,7 +351,7 @@ const MainApp: React.FC = () => {
                 FSSAI Pure Veg Licensed
               </span>
               <span>Razorpay Verified (NO COD)</span>
-              <span>Clerk Auth Protected</span>
+              <span>Supabase Auth Protected</span>
               <span>Ground to 9th Floor A/B</span>
             </div>
           </div>

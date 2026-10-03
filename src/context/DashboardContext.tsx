@@ -88,7 +88,7 @@ const DashboardContext = createContext<DashboardContextType | undefined>(undefin
 export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
-  const [activeTrackingOrderId, setActiveTrackingOrderId] = useState<string | null>('ORD-782101');
+  const [activeTrackingOrderId, setActiveTrackingOrderId] = useState<string | null>(null);
 
   // 1. Dishes State
   const [dishes, setDishes] = useState<Dish[]>(() =>
@@ -359,10 +359,10 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       riderName: 'Karthik Gowda (Wing A Floor Runner)',
       riderPhone: '+91 98450 12345',
       estimatedMinutes: 15,
-      customerName: orderData.customerName || 'Walk-in Student',
-      customerPhone: orderData.customerPhone || '+91 98000 00000',
+      customerName: orderData.customerName || '',
+      customerPhone: orderData.customerPhone || '',
       customerRole: orderData.customerRole || 'Student',
-      customerUsn: orderData.customerUsn || '1RV23CS001',
+      customerUsn: orderData.customerUsn || '',
       paymentMethod: 'Razorpay',
       restaurantName: orderData.restaurantName || 'Campus Canteen Main Counter',
     };
