@@ -12,28 +12,26 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   isAuthModalOpen: boolean;
-  authModalMode: 'login' | 'signup';
-  verifiedEmailSuccess: boolean;
-  setVerifiedEmailSuccess: (val: boolean) => void;
-  openAuthModal: (mode?: 'login' | 'signup' | unknown) => void;
+  openAuthModal: () => void;
   closeAuthModal: () => void;
   loginWithPassword: (
     email: string,
     password: string
   ) => Promise<{ success: boolean; message: string; accountNotExists?: boolean }>;
-  signUpWithPassword: (payload: {
-    name: string;
-    dob: string;
-    email: string;
-    password: string;
-  }) => Promise<{ success: boolean; message: string; alreadyExists?: boolean }>;
+  /** Google OAuth popup — after redirect-back, pendingGoogleEmail is set for the registration form. */
   signInWithGoogle: () => Promise<{ success: boolean; message: string }>;
+  /** Complete registration for a Google-authed user by setting a password + profile fields. */
+  completeGoogleRegistration: (payload: {
+    name: string;
+    phone: string;
+    dob: string;
+    password: string;
+  }) => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   updateProfile: (profileData: Partial<UserProfile>) => Promise<{ success: boolean; message: string }>;
-  needsDobFallback: boolean;
-  dobFallbackUser: { id: string; email: string; name: string } | null;
-  submitDobFallback: (dob: string) => Promise<{ success: boolean; message: string }>;
-  closeDobFallback: () => void;
+  /** Non-null when Google OAuth completed and user needs to fill the registration form. */
+  pendingGoogleEmail: string | null;
+  clearPendingGoogle: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -50,12 +48,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [authModalMode, setAuthModalMode] = useState<'login' | 'signup'>('login');
-  const [verifiedEmailSuccess, setVerifiedEmailSuccess] = useState<boolean>(false);
-
-  // Fallback UI State for Google OAuth DOB
-  const [needsDobFallback, setNeedsDobFallback] = useState<boolean>(false);
-  const [dobFallbackUser, setDobFallbackUser] = useState<{ id: string; email: string; name: string } | null>(null);
+  const [pendingGoogleEmail, setPendingGoogleEmail] = useState<string | null>(null);
 
   const syncSupabaseUser = useCallback(async (currentSession: Session) => {
     try {
@@ -63,30 +56,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const meta = authUser.user_metadata || {};
       const userEmail = (authUser.email || '').trim().toLowerCase();
 
-      // Ensure exact name from Google or metadata
       const profileName =
         meta.full_name ||
         meta.name ||
         userEmail.split('@')[0] ||
         'Campus Scholar';
 
-      // Check profiles table in Supabase
       const { data: dbProfile } = await supabase
         .from('profiles')
         .select('*')
         .eq('email', userEmail)
         .maybeSingle();
 
-      const existingDob = dbProfile?.dob || meta.birthday || meta.dob || '';
-
-      // Google OAuth DOB Fallback check
-      if (!existingDob && authUser.app_metadata.provider === 'google') {
-        setDobFallbackUser({
-          id: authUser.id,
-          email: userEmail,
-          name: dbProfile?.name || profileName,
-        });
-        setNeedsDobFallback(true);
+      // If this is a Google OAuth user who has no profile yet (no password set),
+      // show the registration form instead of auto-logging in.
+      if (!dbProfile && authUser.app_metadata.provider === 'google') {
+        setPendingGoogleEmail(userEmail);
+        setIsAuthModalOpen(true);
+        return;
       }
 
       const mergedProfile: UserProfile = {
@@ -95,7 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: userEmail,
         phone: dbProfile?.phone || meta.phone || '',
         role: (dbProfile?.role as 'Student' | 'Teacher') || 'Student',
-        dob: existingDob,
+        dob: dbProfile?.dob || meta.dob || '',
         usn: dbProfile?.usn || '',
         pickupZone: dbProfile?.pickup_zone || CAMPUS_PICKUP_ZONES[0],
         created_at: dbProfile?.created_at || new Date().toISOString(),
@@ -106,7 +93,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: authUser.id,
           email: userEmail,
           name: dbProfile?.name || profileName,
-          dob: existingDob,
+          dob: mergedProfile.dob,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'email' });
       } catch (upsertErr) {
@@ -120,52 +107,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Handle URL email verification link return
-  useEffect(() => {
-    const handleUrlAuth = async () => {
-      const hash = window.location.hash || '';
-      const search = window.location.search || '';
-
-      const isVerificationReturn =
-        hash.includes('auth-verified') ||
-        hash.includes('type=signup') ||
-        hash.includes('type=email_confirmation') ||
-        search.includes('type=signup') ||
-        search.includes('type=email_confirmation');
-
-      if (isVerificationReturn) {
-        // PDF: "After customer receive the sign in link and click it verify it and redirect to the login page(user enters email and passwords)."
-        try {
-          await supabase.auth.signOut();
-        } catch {
-          // ignore
-        }
-        setUser(null);
-        storage.remove(STORAGE_KEY);
-        window.history.replaceState(null, '', window.location.pathname);
-        setAuthModalMode('login');
-        setIsAuthModalOpen(true);
-        setVerifiedEmailSuccess(true);
-      }
-    };
-
-    handleUrlAuth();
-  }, []);
-
   useEffect(() => {
     const initAuth = async () => {
       try {
         const { data: { session: currentSession } } = await supabase.auth.getSession();
         if (currentSession) {
-          const hash = window.location.hash || '';
-          if (hash.includes('type=signup') || hash.includes('type=email_confirmation') || hash.includes('auth-verified')) {
-            await supabase.auth.signOut();
-            setUser(null);
-            storage.remove(STORAGE_KEY);
-          } else {
-            setSession(currentSession);
-            await syncSupabaseUser(currentSession);
-          }
+          setSession(currentSession);
+          await syncSupabaseUser(currentSession);
         }
       } catch (err) {
         console.error('Error fetching Supabase session:', err);
@@ -178,21 +126,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, currentSession) => {
-        const hash = window.location.hash || '';
-        if (hash.includes('type=signup') || hash.includes('type=email_confirmation') || hash.includes('auth-verified')) {
-          try {
-            await supabase.auth.signOut();
-          } catch {}
-          setUser(null);
-          storage.remove(STORAGE_KEY);
-          window.history.replaceState(null, '', window.location.pathname);
-          setAuthModalMode('login');
-          setIsAuthModalOpen(true);
-          setVerifiedEmailSuccess(true);
-          setLoading(false);
-          return;
-        }
-
         if (currentSession) {
           setSession(currentSession);
           await syncSupabaseUser(currentSession);
@@ -208,18 +141,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [syncSupabaseUser]);
 
-  const openAuthModal = (mode?: 'login' | 'signup' | unknown) => {
-    const resolvedMode = mode === 'signup' ? 'signup' : 'login';
-    setAuthModalMode(resolvedMode);
+  const openAuthModal = () => {
     setIsAuthModalOpen(true);
   };
 
   const closeAuthModal = () => {
     setIsAuthModalOpen(false);
-    setVerifiedEmailSuccess(false);
   };
 
-  // 1. Password Login (Page 1)
+  const clearPendingGoogle = () => {
+    setPendingGoogleEmail(null);
+  };
+
+  // Password Login
   const loginWithPassword = async (
     email: string,
     password: string
@@ -241,11 +175,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error) {
-        // PDF Requirement:
-        // "if the login creditienals are not there says Account do not exist and Redirect to Sign up option."
         return {
           success: false,
-          message: 'Account does not exist. Redirecting to Sign up option...',
+          message: 'Account does not exist. Please continue with Google to create an account.',
           accountNotExists: true,
         };
       }
@@ -253,121 +185,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (data.session && data.user) {
         setSession(data.session);
         await syncSupabaseUser(data.session);
-        return {
-          success: true,
-          message: 'Logged in successfully!',
-        };
+        return { success: true, message: 'Logged in successfully!' };
       }
 
       return {
         success: false,
-        message: 'Account does not exist. Redirecting to Sign up option...',
+        message: 'Account does not exist. Please continue with Google to create an account.',
         accountNotExists: true,
       };
     } catch (err: any) {
       console.error('[loginWithPassword Exception]:', err);
       return {
         success: false,
-        message: 'Account does not exist. Redirecting to Sign up option...',
+        message: 'Account does not exist. Please continue with Google to create an account.',
         accountNotExists: true,
       };
     }
   };
 
-  // 2. Signup with Password & Verification Link (Page 2)
-  const signUpWithPassword = async (payload: {
-    name: string;
-    dob: string;
-    email: string;
-    password: string;
-  }): Promise<{ success: boolean; message: string; alreadyExists?: boolean }> => {
-    const cleanEmail = payload.email.trim().toLowerCase();
-    const cleanName = payload.name.trim();
-    const cleanDob = payload.dob.trim();
-    const cleanPassword = payload.password;
-
-    if (!cleanName) {
-      return { success: false, message: 'Please enter your full name.' };
-    }
-    if (!cleanDob) {
-      return { success: false, message: 'Please select your Date of Birth (DOB).' };
-    }
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      return { success: false, message: 'Please enter a valid email address.' };
-    }
-    if (!cleanPassword) {
-      return { success: false, message: 'Please enter a strong password.' };
-    }
-
-    try {
-      // Sign up with Supabase Auth with redirect URL for email verification
-      const redirectUrl = `${window.location.origin}/#auth-verified`;
-      const { data, error } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password: cleanPassword,
-        options: {
-          data: {
-            full_name: cleanName,
-            dob: cleanDob,
-          },
-          emailRedirectTo: redirectUrl,
-        },
-      });
-
-      if (error) {
-        const errMsg = error.message?.toLowerCase() || '';
-        if (
-          errMsg.includes('already registered') ||
-          errMsg.includes('already exists') ||
-          errMsg.includes('user already exists')
-        ) {
-          return {
-            success: false,
-            message: 'An account with this email already exists. Please log in.',
-            alreadyExists: true,
-          };
-        }
-        return {
-          success: false,
-          message: error.message || 'Unable to register account. Please try again.',
-        };
-      }
-
-      // Save profile details into Supabase public.profiles table
-      const profileId = data.user?.id || ('usr-' + Date.now());
-      try {
-        await supabase.from('profiles').upsert({
-          id: profileId,
-          email: cleanEmail,
-          name: cleanName,
-          dob: cleanDob,
-          role: 'Student',
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'email' });
-      } catch (dbErr) {
-        console.warn('Profile save warning during signup:', dbErr);
-      }
-
-      return {
-        success: true,
-        message: `A sign-in link has been sent to ${cleanEmail} for authentication. Please click it to verify.`,
-      };
-    } catch (err: any) {
-      console.error('[signUpWithPassword Exception]:', err);
-      return {
-        success: false,
-        message: err.message || 'Error creating account. Please try again.',
-      };
-    }
-  };
-
-  // Google Sign-In
+  // Google Sign-In (used to initiate registration)
   const signInWithGoogle = async () => {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          scopes: 'openid email profile https://www.googleapis.com/auth/user.birthday.read',
           redirectTo: window.location.origin,
         },
       });
@@ -378,48 +219,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const submitDobFallback = async (dob: string) => {
-    if (!dobFallbackUser) {
-      return { success: false, message: 'No Google user pending DOB verification' };
+  // Complete registration after Google OAuth — sets password + saves profile
+  const completeGoogleRegistration = async (payload: {
+    name: string;
+    phone: string;
+    dob: string;
+    password: string;
+  }): Promise<{ success: boolean; message: string }> => {
+    if (!session || !pendingGoogleEmail) {
+      return { success: false, message: 'No pending Google registration found.' };
     }
 
-    const cleanDob = dob.trim();
-    if (!cleanDob) {
-      return { success: false, message: 'Please select a valid Date of Birth' };
-    }
+    const cleanName = payload.name.trim();
+    const cleanPhone = payload.phone.trim();
+    const cleanDob = payload.dob.trim();
+
+    if (!cleanName) return { success: false, message: 'Please enter your full name.' };
+    if (!cleanPhone) return { success: false, message: 'Please enter your phone number.' };
+    if (!cleanDob) return { success: false, message: 'Please select your Date of Birth.' };
 
     try {
+      // Set a password on the Google-authed account so they can login with email+password later
+      const { error: updateErr } = await supabase.auth.updateUser({
+        password: payload.password,
+      });
+      if (updateErr) {
+        return { success: false, message: updateErr.message || 'Failed to set password.' };
+      }
+
+      const profileId = session.user.id;
       await supabase.from('profiles').upsert({
-        id: dobFallbackUser.id,
-        email: dobFallbackUser.email,
-        name: dobFallbackUser.name,
+        id: profileId,
+        email: pendingGoogleEmail,
+        name: cleanName,
+        phone: cleanPhone,
         dob: cleanDob,
+        role: 'Student',
         updated_at: new Date().toISOString(),
       }, { onConflict: 'email' });
 
-      if (user) {
-        const updatedUser = { ...user, dob: cleanDob };
-        setUser(updatedUser);
-        storage.set(STORAGE_KEY, updatedUser);
-      }
-
-      setNeedsDobFallback(false);
-      setDobFallbackUser(null);
-
-      return {
-        success: true,
-        message: 'Date of Birth saved successfully! Profile setup complete.',
+      const newProfile: UserProfile = {
+        id: profileId,
+        name: cleanName,
+        email: pendingGoogleEmail,
+        phone: cleanPhone,
+        role: 'Student',
+        dob: cleanDob,
+        usn: '',
+        pickupZone: CAMPUS_PICKUP_ZONES[0],
+        created_at: new Date().toISOString(),
       };
+
+      setUser(newProfile);
+      storage.set(STORAGE_KEY, newProfile);
+      setPendingGoogleEmail(null);
+
+      return { success: true, message: 'Account created successfully!' };
     } catch (err: any) {
-      return {
-        success: false,
-        message: err.message || 'Failed to save Date of Birth',
-      };
+      console.error('[completeGoogleRegistration Exception]:', err);
+      return { success: false, message: err.message || 'Error completing registration.' };
     }
-  };
-
-  const closeDobFallback = () => {
-    setNeedsDobFallback(false);
   };
 
   const logout = async () => {
@@ -429,6 +288,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
     setUser(null);
+    setPendingGoogleEmail(null);
     storage.remove(STORAGE_KEY);
   };
 
@@ -464,20 +324,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         session,
         loading,
         isAuthModalOpen,
-        authModalMode,
-        verifiedEmailSuccess,
-        setVerifiedEmailSuccess,
         openAuthModal,
         closeAuthModal,
         loginWithPassword,
-        signUpWithPassword,
         signInWithGoogle,
+        completeGoogleRegistration,
         logout,
         updateProfile,
-        needsDobFallback,
-        dobFallbackUser,
-        submitDobFallback,
-        closeDobFallback,
+        pendingGoogleEmail,
+        clearPendingGoogle,
       }}
     >
       {children}

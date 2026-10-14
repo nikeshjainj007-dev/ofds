@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.61.10",
+    "@supabase/server": "^1.9.1",
     "@supabase/supabase-js": "^2.117.1",
     "canvas-confetti": "^1.9.4",
     "lucide-react": "^1.47.0",
